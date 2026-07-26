@@ -339,3 +339,12 @@ pending
 - **Bug**: Clicking a track that failed while offline did nothing after the network returned.
 - **Files**: 0 files
 - **Tests**: test:playback-boundary; test:phase4-data
+
+## 2026-07-26T22:15:26.302+08:00 — fix(lyrics): apply LRC offset to timeline and fix TTML romanization
+
+- **Context-Id**: ccecdf84-52e8-4163-9bc5-ecaf57416dc1
+- **Decision**: Bake offset into the timeline once at parse time
+- **Decision**: Pair romanization by pre-filter line index
+- **Bug**: Nonzero [offset:] desynced word highlight and line progress across all lyric views; empty TTML lines misaligned romanization.
+- **Files**: 0 files
+- **Tests**: test:lyric-formats; test:lyric-duet

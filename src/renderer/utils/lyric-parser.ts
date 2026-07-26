@@ -471,8 +471,11 @@ function parseWithAmlLibraries(
                 line,
                 ...(line.backgroundVocal ? [line.backgroundVocal] : []),
             ]);
-            items.forEach((item, index) => {
-                const romanization = ttmlLyricBases[index]?.romanizations?.[0]?.text;
+            // 用 item.index（convertAmlLyricLines 保留的过滤前下标）配对，
+            // 不能用过滤后的数组位置：空文本行会被 filter 丢掉，而
+            // ttmlLyricBases 是未过滤的，错位后每行都会拿到前面某行的音译。
+            items.forEach((item) => {
+                const romanization = ttmlLyricBases[item.index]?.romanizations?.[0]?.text;
                 if (romanization?.trim()) {
                     // toAmllLyrics aligns word-level romanization onto words and
                     // drops syllable spacing. Keep the source's complete text too.
@@ -558,6 +561,24 @@ function timeToLrcTag(sec: number): string {
     return `[${min.toFixed(0).padStart(2, "0")}:${secInt
         .toString()
         .padStart(2, "0")}.${secFloat.toFixed(2).slice(2)}]`;
+}
+
+/** 把 [offset:] 并入行、词、罗马音逐字的时间轴（单位秒）。 */
+function shiftLyricItemsTime(items: IParsedLrcItem[], offsetSeconds: number) {
+    const shiftWords = (words?: ILyric.IWordData[]) => {
+        words?.forEach((word) => {
+            word.startTime += offsetSeconds;
+            word.endTime += offsetSeconds;
+        });
+    };
+    items.forEach((item) => {
+        item.time += offsetSeconds;
+        if (item.endTime != null) {
+            item.endTime += offsetSeconds;
+        }
+        shiftWords(item.words);
+        shiftWords(item.romanizationWords);
+    });
 }
 
 function parseMeta(raw: string): LyricMeta {
@@ -2704,6 +2725,17 @@ export default class LyricParser {
             item.index = i;
         });
 
+        // [offset:] 在这里一次性并入时间轴。此前只有 getPosition 单独减 offset，
+        // 于是"挑哪一行"是校正过的，而 lineProgress、词级二分查找和所有 AMLL
+        // 视图（详情页、桌面歌词、迷你模式）用的都是未校正时间，整首歌的逐字
+        // 高亮与行内进度会偏移 offset 秒。并入后必须清掉 meta.offset，
+        // 否则导出的歌词会再偏移一次。
+        const offsetSeconds = typeof meta.offset === "number" ? meta.offset : 0;
+        if (offsetSeconds) {
+            shiftLyricItemsTime(items, offsetSeconds);
+            delete meta.offset;
+        }
+
         return {
             lrcItems: items,
             meta,
@@ -2714,7 +2746,7 @@ export default class LyricParser {
 
     /** 获取当前行（兼容旧接口） */
     getPosition(position: number): IParsedLrcItem | null {
-        position = position - (this.meta?.offset ?? 0);
+        // offset 已在 parseAll 并入 items 的时间轴，这里不能再减一次。
         const searchableItems = this.searchableLrcItems;
 
         if (!searchableItems[0] || position < searchableItems[0].time) {

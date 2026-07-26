@@ -250,4 +250,48 @@ function parse(raw, format) {
     assert.equal(repairedLines[1].lrc, "Background");
 }
 
+// [offset:] 必须在解析时一次性并入时间轴：以前只有 getPosition 单独减 offset，
+// 挑行是校正过的，而 lineProgress、词级进度和 AMLL 视图全用未校正时间。
+{
+    const parser = new LyricParser(
+        "[offset:5000]\n[00:10.00]line A\n[00:20.00]line B",
+    );
+    const items = parser.getLyricItems();
+    assert.deepEqual(items.map((item) => item.time), [15, 25]);
+    // 并入后必须清掉 meta.offset，否则导出的歌词会再偏移一次。
+    assert.equal(parser.getMeta().offset, undefined);
+    const state = parser.getActiveState(16);
+    assert.equal(state.line.lrc, "line A");
+    // (16 - 15) / 10 = 0.1；修复前这里是 (16 - 10) / 10 = 0.6。
+    assert.ok(Math.abs(state.lineProgress - 0.1) < 1e-6, String(state.lineProgress));
+    assert.equal(parser.getPosition(16).lrc, "line A");
+    assert.equal(parser.getPosition(14), null);
+}
+
+// TTML 罗马音按过滤前的行下标配对：空文本行会被 convertAmlLyricLines 丢掉，
+// 用过滤后的数组位置会让后面每行都拿到前一行的音译。
+{
+    // 第一行是空文本的间隔行（本应用自己导出的 TTML 就会包含这种行）。
+    const ttml = [
+        "<tt xmlns=\"http://www.w3.org/ns/ttml\"",
+        " xmlns:ttm=\"http://www.w3.org/ns/ttml#metadata\"",
+        " xmlns:itunes=\"http://music.apple.com/lyric-ttml-internal\"><body><div>",
+        "<p begin=\"00:00:00.500\" end=\"00:00:01.000\" itunes:key=\"L1\"></p>",
+        "<p begin=\"00:00:01.000\" end=\"00:00:03.000\" itunes:key=\"L2\">",
+        "<span begin=\"00:00:01.000\" end=\"00:00:03.000\">こんにちは</span>",
+        "<span ttm:role=\"x-translation\" xml:lang=\"zh\">你好</span>",
+        "<span ttm:role=\"x-roman\">konnichiwa</span></p>",
+        "<p begin=\"00:00:05.000\" end=\"00:00:07.000\" itunes:key=\"L3\">",
+        "<span begin=\"00:00:05.000\" end=\"00:00:07.000\">さようなら</span>",
+        "<span ttm:role=\"x-roman\">sayounara</span></p>",
+        "</div></body></tt>",
+    ].join("");
+    const items = new LyricParser(ttml, { format: "ttml" }).getLyricItems();
+    const romanizationByText = new Map(
+        items.map((item) => [item.lrc, item.romanization]),
+    );
+    assert.equal(romanizationByText.get("こんにちは"), "konnichiwa");
+    assert.equal(romanizationByText.get("さようなら"), "sayounara");
+}
+
 console.log("lyric-formats: all assertions passed");
