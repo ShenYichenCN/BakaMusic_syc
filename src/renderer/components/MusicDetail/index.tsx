@@ -24,11 +24,19 @@ import { getCurrentPanel } from "@/renderer/components/Panel";
 export const isMusicDetailShown = musicDetailShownStore.getValue;
 export const useMusicDetailShown = musicDetailShownStore.useValue;
 const FULLSCREEN_CURSOR_IDLE_MS = 1600;
-// Cover transform leads native bounds so the stage never jumps with window resize.
+// The OS fullscreen snap is un-animatable: the veil keyframes duck content to
+// opacity 0, hold while native bounds change, then rise. OS delays land the
+// snap inside the hold; phase timers outlive the longest (trail) keyframe.
 const IMMERSIVE_OS_ENTER_DELAY_MS = 120;
-const IMMERSIVE_OS_EXIT_DELAY_MS = 200;
-const IMMERSIVE_BUSY_MS = 600;
-const IMMERSIVE_TOGGLE_DEBOUNCE_MS = 360;
+const IMMERSIVE_OS_EXIT_DELAY_MS = 160;
+const IMMERSIVE_BUSY_MS = 950;
+// 400ms (not 360) so a reversal can never land inside the previous veil's
+// opacity-0 trail hold (enter hold ends 392ms, exit 388ms) — a mid-hold
+// animation restart would flash the lyric column from invisible to opaque.
+// Must stay equal to the bootstrap global F11 debounce.
+const IMMERSIVE_TOGGLE_DEBOUNCE_MS = 400;
+const IMMERSIVE_PHASE_ENTER_MS = 880;
+const IMMERSIVE_PHASE_EXIT_MS = 750;
 
 function MusicDetail() {
     const musicItem = useCurrentMusic();
@@ -37,6 +45,7 @@ function MusicDetail() {
     const musicDetailShown = musicDetailShownStore.useValue();
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [isImmersiveBusy, setIsImmersiveBusy] = useState(false);
+    const [immersivePhase, setImmersivePhase] = useState<"idle" | "enter" | "exit">("idle");
     const [isFullscreenCursorHidden, setIsFullscreenCursorHidden] = useState(false);
     const [storedCoverStyle] = useUserPreference("musicDetailCoverStyle");
     const [storedVinylTonearm] = useUserPreference("musicDetailVinylTonearm");
@@ -47,6 +56,8 @@ function MusicDetail() {
     const lastF11ToggleAtRef = useRef(0);
     const immersiveOsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const immersiveBusyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const immersivePhaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingReconcileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const immersiveOsFrameRef = useRef<number | null>(null);
     const pendingImmersiveRef = useRef<boolean | null>(null);
     const cursorHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -67,6 +78,14 @@ function MusicDetail() {
         if (immersiveOsFrameRef.current !== null) {
             cancelAnimationFrame(immersiveOsFrameRef.current);
             immersiveOsFrameRef.current = null;
+        }
+        if (immersivePhaseTimerRef.current !== null) {
+            clearTimeout(immersivePhaseTimerRef.current);
+            immersivePhaseTimerRef.current = null;
+        }
+        if (pendingReconcileTimerRef.current !== null) {
+            clearTimeout(pendingReconcileTimerRef.current);
+            pendingReconcileTimerRef.current = null;
         }
     };
 
@@ -121,6 +140,51 @@ function MusicDetail() {
         }, IMMERSIVE_BUSY_MS);
     };
 
+    // Veil lifecycle: the phase attribute must return to "idle" on every path,
+    // or animation fill-mode would strand the columns at their keyframe state.
+    const markImmersivePhase = (next: boolean) => {
+        if (immersivePhaseTimerRef.current !== null) {
+            clearTimeout(immersivePhaseTimerRef.current);
+        }
+        setImmersivePhase(next ? "enter" : "exit");
+        immersivePhaseTimerRef.current = setTimeout(() => {
+            immersivePhaseTimerRef.current = null;
+            setImmersivePhase("idle");
+        }, next ? IMMERSIVE_PHASE_ENTER_MS : IMMERSIVE_PHASE_EXIT_MS);
+    };
+
+    // A led toggle that never yields a fullscreen-changed event (the OS side was
+    // debounced away, or the window was already in the target state) would leave
+    // pendingImmersiveRef walling off every later event forever, with chrome and
+    // OS inverted. After the veil settles, reconcile chrome against reality.
+    const schedulePendingReconcile = () => {
+        if (pendingReconcileTimerRef.current !== null) {
+            clearTimeout(pendingReconcileTimerRef.current);
+        }
+        pendingReconcileTimerRef.current = setTimeout(() => {
+            pendingReconcileTimerRef.current = null;
+            if (pendingImmersiveRef.current === null) {
+                return;
+            }
+            void appWindowUtil.isMainWindowFullScreen?.().then((enabled) => {
+                if (
+                    pendingImmersiveRef.current === null
+                    || !musicDetailShownStore.getValue()
+                ) {
+                    return;
+                }
+                pendingImmersiveRef.current = null;
+                const actual = Boolean(enabled);
+                if (actual !== isFullscreenRef.current) {
+                    markImmersiveBusy();
+                    markImmersivePhase(actual);
+                }
+                setIsFullscreen(actual);
+                isFullscreenRef.current = actual;
+            });
+        }, IMMERSIVE_BUSY_MS);
+    };
+
     const applyImmersiveFullScreen = (next: boolean, options?: { osDelayMs?: number }) => {
         // Drive chrome CSS first; delay OS fullscreen so enter/exit motion can lead.
         clearImmersiveSchedulers();
@@ -129,8 +193,10 @@ function MusicDetail() {
         setIsFullscreen(next);
         isFullscreenRef.current = next;
         markImmersiveBusy();
+        markImmersivePhase(next);
+        schedulePendingReconcile();
 
-        // Exit leads chrome longer so the topbar/stage can settle before the window shrinks.
+        // The OS delay lands the native snap inside the veil's opacity-0 hold.
         const delayMs = options?.osDelayMs
             ?? (next ? IMMERSIVE_OS_ENTER_DELAY_MS : IMMERSIVE_OS_EXIT_DELAY_MS);
         const applyOs = () => {
@@ -205,6 +271,16 @@ function MusicDetail() {
             ) {
                 return;
             }
+            // OS-driven flip with no chrome lead (external toggle, or an F11 that
+            // only bootstrap's debounce accepted): the snap already landed, so the
+            // veil can only settle content afterwards — still better than a jump.
+            if (
+                pendingImmersiveRef.current === null
+                && enabled !== isFullscreenRef.current
+            ) {
+                markImmersiveBusy();
+                markImmersivePhase(enabled);
+            }
             pendingImmersiveRef.current = null;
             setIsFullscreen(enabled);
             isFullscreenRef.current = enabled;
@@ -217,19 +293,24 @@ function MusicDetail() {
     // F11 OS toggle is global (bootstrap). Here only lead immersive chrome when open.
     useEffect(() => {
         const unsubscribe = appWindowUtil.onMainWindowF11?.(() => {
-            if (!musicDetailShownStore.getValue()) {
-                return;
-            }
+            // Keep this debounce clock in lockstep with bootstrap's global F11
+            // handler: record every accepted press even while the detail page is
+            // hidden, so both sides always agree on which press wins.
             const now = Date.now();
             if (now - lastF11ToggleAtRef.current < IMMERSIVE_TOGGLE_DEBOUNCE_MS) {
                 return;
             }
             lastF11ToggleAtRef.current = now;
+            if (!musicDetailShownStore.getValue()) {
+                return;
+            }
             const next = !isFullscreenRef.current;
             pendingImmersiveRef.current = next;
             setIsFullscreen(next);
             isFullscreenRef.current = next;
             markImmersiveBusy();
+            markImmersivePhase(next);
+            schedulePendingReconcile();
         });
         return () => {
             unsubscribe?.();
@@ -255,11 +336,22 @@ function MusicDetail() {
             return;
         }
 
+        // A pending delayed OS apply (e.g. Escape scheduled a fullscreen exit,
+        // then a second Escape closed the page) must be flushed, not cancelled —
+        // cancelling would strand the window fullscreen with no chrome leading.
+        if (
+            immersiveOsTimerRef.current !== null
+            && pendingImmersiveRef.current !== null
+            && typeof appWindowUtil.setMainWindowFullScreen === "function"
+        ) {
+            appWindowUtil.setMainWindowFullScreen(pendingImmersiveRef.current);
+        }
         clearImmersiveSchedulers();
         pendingImmersiveRef.current = null;
         setIsFullscreen(false);
         isFullscreenRef.current = false;
         setIsImmersiveBusy(false);
+        setImmersivePhase("idle");
     }, [musicDetailShown]);
 
     useEffect(() => {
@@ -335,7 +427,15 @@ function MusicDetail() {
             inert={!musicDetailShown}
             data-fullscreen={isFullscreen ? "true" : "false"}
             data-immersive-busy={isImmersiveBusy ? "true" : "false"}
+            data-immersive-phase={immersivePhase}
             data-cursor-hidden={isFullscreenCursorHidden ? "true" : "false"}
+            style={
+                {
+                    // Component-owned artwork input, inherited by the backdrop
+                    // frost and the stage's ambient glow alike.
+                    ["--music-detail-artwork" as string]: `url(${artwork})`,
+                }
+            }
             mountClassName="music-detail--enter"
             unmountClassName="music-detail--exit"
             onMountAnimationEnd={() => {
@@ -344,15 +444,7 @@ function MusicDetail() {
                 setLyricPlayerReady(true);
             }}
         >
-            <div
-                className="music-detail-background"
-                style={
-                    {
-                        // Component-owned artwork input; theme controls the surrounding stage.
-                        ["--music-detail-artwork" as string]: `url(${artwork})`,
-                    }
-                }
-            ></div>
+            <div className="music-detail-background"></div>
             <div className="music-detail-overlay"></div>
 
             <div className="music-detail-shell">

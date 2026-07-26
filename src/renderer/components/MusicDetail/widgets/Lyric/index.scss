@@ -15,12 +15,37 @@
   backdrop-filter: blur(30px) saturate(140%);
 }
 
+// Fullscreen immersion dissolves the card chrome so lyrics float free on the
+// blurred artwork. The swap is deliberately instant: it always lands either
+// under the toggle veil or at sheet-mount (adopt path), and dropping backdrop
+// blur is invisible over the 82px-blurred opaque backdrop. Box metrics
+// (padding, 1px border width) stay identical so the AMLL stage never reflows.
+.music-detail--container[data-fullscreen="true"] .music-detail-lyric-panel {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+// During the toggle veil the chrome swap is deferred into the opacity-0 hold
+// (data-fullscreen flips at t=0, while the column is still visible). Backdrop
+// blur stays instant — its removal is invisible over the 82px-blurred backdrop.
+.music-detail--container[data-immersive-phase="enter"] .music-detail-lyric-panel,
+.music-detail--container[data-immersive-phase="exit"] .music-detail-lyric-panel {
+  transition:
+    background-color 1ms linear 90ms,
+    border-color 1ms linear 90ms,
+    box-shadow 1ms linear 90ms;
+}
+
 .music-detail-lyric-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 16px;
+  transition: opacity 320ms var(--md-ease-out), visibility 0s linear 0s;
 
   & .music-detail-lyric-toolbar-title {
     display: flex;
@@ -347,6 +372,17 @@
   padding-left: 12px;
 }
 
+// Idle fullscreen is pure cover + lyrics: the toolbar rides the existing
+// cursor-idle state. Guards keep it interactive while its popover is open or
+// anything inside holds keyboard focus; visibility flips only after the fade.
+.music-detail--container[data-fullscreen="true"][data-cursor-hidden="true"]
+  .music-detail-lyric-toolbar:not(:focus-within):not(:has([data-open="true"])) {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 320ms var(--md-ease-out), visibility 0s linear 320ms;
+}
+
 @keyframes music-detail-cover-popover-in {
   from {
     opacity: 0;
@@ -356,5 +392,17 @@
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .music-detail-lyric-toolbar {
+    transition-duration: 1ms, 0s !important;
+    transition-delay: 0ms !important;
+  }
+
+  .music-detail-lyric-panel {
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
   }
 }

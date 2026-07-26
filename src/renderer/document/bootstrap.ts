@@ -14,7 +14,7 @@ import PluginManager from "@shared/plugin-manager/renderer";
 import messageBus from "@shared/message-bus/renderer/main";
 import throttle from "lodash.throttle";
 import { IAppState } from "@shared/message-bus/type";
-import MusicDetail from "@renderer/components/MusicDetail";
+import MusicDetail, { isMusicDetailShown } from "@renderer/components/MusicDetail";
 import shortCut from "@shared/short-cut/renderer";
 import { applyUiStyle } from "@renderer/utils/ui-style";
 import { toast } from "react-toastify";
@@ -220,13 +220,22 @@ function setupCommandAndEvents() {
 
     // Global F11: toggle OS fullscreen on any page (not only music detail).
     // MusicDetail listens to fullscreen-changed for immersive chrome when open.
+    // Debounce matches MusicDetail's toggle debounce so both always agree on
+    // which press wins. While the detail page is shown its veil choreography
+    // leads: defer the un-animatable OS snap into the veil's opacity-0 hold.
     let lastMainWindowF11At = 0;
     appWindowUtil.onMainWindowF11?.(() => {
         const now = Date.now();
-        if (now - lastMainWindowF11At < 280) {
+        if (now - lastMainWindowF11At < 400) {
             return;
         }
         lastMainWindowF11At = now;
+        if (isMusicDetailShown()) {
+            setTimeout(() => {
+                void appWindowUtil.toggleMainWindowFullScreen?.();
+            }, 90);
+            return;
+        }
         void appWindowUtil.toggleMainWindowFullScreen?.();
     });
 

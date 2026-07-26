@@ -294,3 +294,10 @@ pending
 - **Bug**: Old synchronized frames were selected as hundreds of one-word lines after overwrite; complete TTML now wins and old frames are removed.
 - **Files**: 15 files
 - **Tests**: TypeScript; ESLint; full regression suite; FLAC/MP3/M4A/WAV metadata round-trip; diff check; package bundles built before active-dev finalization collision
+## 2026-07-26T22:13:18.643+08:00 — feat(music-detail): immersive fullscreen veil choreography
+
+- **Context-Id**: 7013e0e9-f46e-4310-9e7f-516e817f1b1b
+- **Decision**: Hide the un-animatable OS fullscreen snap behind a veil phase
+- **Decision**: Dissolve lyric card chrome and idle the toolbar in fullscreen
+- **Files**: 0 files
+- **Tests**: npm exec tsc -- --noEmit; package && npm run smoke:package

@@ -3,6 +3,8 @@
     --md-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
     --md-ease-in: cubic-bezier(0.32, 0, 0.67, 0);
     --md-ease-cover: cubic-bezier(0.22, 1, 0.36, 1);
+    // Veil duck: front-loaded so content is near-invisible before the OS snap.
+    --md-veil-fade: cubic-bezier(0.2, 0.6, 0.35, 1);
     --md-dur-chrome: 280ms;
     --md-dur-cover: 560ms;
     // Visual windowed size relative to fixed immersive box (~430/500).
@@ -24,8 +26,10 @@
     -webkit-app-region: no-drag;
 
     // Page open/close: full-height sheet that expands upward from the bottom edge
-    // (music bar handoff). Keep motion on the container only so immersive child
-    // transforms are never locked by animation fill-mode.
+    // (music bar handoff). Page motion stays on the container; the only child
+    // animations are the transient data-immersive-phase veil keyframes below,
+    // whose fill is always released when the TSX phase timers return the
+    // attribute to "idle" — immersive child transforms are never left locked.
     &.music-detail--enter {
         transform-origin: 50% 100%;
         animation: music-detail-page-enter 400ms var(--md-ease-out) both;
@@ -52,11 +56,40 @@
     }
 
     // Promote compositing while immersive or page sheet motion is in flight.
+    // Targets match the veil-animated columns; promotion stays transient.
     &[data-immersive-busy="true"] {
-        .music-detail-topbar,
-        .music-detail-primary-stage,
+        .music-detail-topbar-slot,
+        .music-detail-primary-column,
+        .music-detail-lyric-column,
         .music-detail-background::before {
             will-change: transform, opacity;
+        }
+    }
+
+    // Immersive toggle veil: the OS fullscreen snap cannot animate, so the three
+    // layout-bound columns duck to opacity 0, hold while native bounds change
+    // (and AMLL relayouts), then rise over the resize-stable blurred backdrop.
+    // The stagger lives in keyframe percentages — never animation-delay + fill,
+    // which would hold the lyric column visible straight through the snap.
+    &[data-immersive-phase="enter"] {
+        .music-detail-topbar-slot,
+        .music-detail-primary-column {
+            animation: md-veil-enter-lead 640ms linear both;
+        }
+
+        .music-detail-lyric-column {
+            animation: md-veil-enter-trail 800ms linear both;
+        }
+    }
+
+    &[data-immersive-phase="exit"] {
+        .music-detail-topbar-slot,
+        .music-detail-primary-column {
+            animation: md-veil-exit-lead 560ms linear both;
+        }
+
+        .music-detail-lyric-column {
+            animation: md-veil-exit-trail 670ms linear both;
         }
     }
 
@@ -100,6 +133,55 @@
             transition:
                 opacity 480ms var(--md-ease-cover),
                 transform 600ms var(--md-ease-cover);
+        }
+
+        // Vignette fades in during the veil's rise segment (delay skips the hold).
+        .music-detail-overlay::after {
+            opacity: 0.618;
+            transition-delay: 200ms;
+        }
+
+        // Ambient artwork light gains presence in fullscreen (phi steps).
+        .music-detail-primary-stage::before {
+            opacity: 0.618;
+        }
+
+        // Parity with the square artwork's deeper fullscreen shadow; the phase
+        // rules below defer the swap under the veil hold.
+        .music-detail-vinyl-cover {
+            filter: drop-shadow(0 28px 60px rgba(0, 0, 0, 0.5));
+        }
+    }
+
+    // Recompose under the veil. These rules must stay AFTER the
+    // [data-fullscreen="true"] block: they share its specificity, and on enter
+    // both attributes flip in the same commit — source order is what lets the
+    // 90ms-delayed 1ms swap beat the 560ms cover tween, so the jump fires only
+    // after the duck reaches opacity 0 (58/80ms), never as a visible pop, and
+    // content reappears already composed — the rise is the only visible motion.
+    &[data-immersive-phase="enter"],
+    &[data-immersive-phase="exit"] {
+        .music-detail-primary-stage {
+            transition: transform 1ms linear 90ms;
+        }
+
+        .music-detail-artwork {
+            transition: box-shadow 1ms linear 90ms;
+        }
+
+        // Delayed one-shot swap, not a running tween: a 1ms filter "transition"
+        // re-rasterizes the spinning record once under the hold, not per frame.
+        .music-detail-vinyl-cover {
+            transition: filter 1ms linear 90ms;
+        }
+    }
+
+    // Adopt path (open while already OS-fullscreen): busy without a veil phase.
+    // First paint must be composed, not tweening from the windowed rest pose
+    // underneath the bottom-sheet entrance.
+    &[data-immersive-busy="true"][data-immersive-phase="idle"] {
+        .music-detail-primary-stage {
+            transition: none;
         }
     }
 
@@ -149,16 +231,29 @@
     }
 
     & .music-detail-overlay {
-        // Client-owned translucent light wash keeps the blurred artwork visible.
+        // Client-owned neutral wash: a top light plus a bottom-weighted scrim
+        // (phi stops) keeps the blurred artwork visible without fighting its
+        // palette, and is darkest where the floating music bar needs contrast.
         background:
-            radial-gradient(circle at top left, rgba(255, 255, 255, 0.18), transparent 32%),
-            radial-gradient(circle at 80% 16%, rgba(255, 120, 160, 0.12), transparent 24%),
-            linear-gradient(135deg, rgba(14, 14, 18, 0.36), rgba(8, 8, 12, 0.74)) !important;
+            radial-gradient(120% 84% at 20% -6%, rgba(255, 255, 255, 0.12), transparent 38.2%),
+            linear-gradient(180deg, rgba(12, 13, 18, 0.3) 0%, rgba(9, 10, 15, 0.46) 61.8%, rgba(6, 7, 11, 0.66) 100%) !important;
         // The artwork layer is already blurred by 82px. A second viewport-wide
         // backdrop pass only delays compositing during the entrance animation.
         backdrop-filter: none !important;
         -webkit-backdrop-filter: none !important;
         opacity: 1;
+
+        // Fullscreen vignette: gradients cannot transition, so a static gradient
+        // rides an opacity fade on the resize-stable backdrop layer.
+        &::after {
+            content: "";
+            position: absolute;
+            inset: -2%;
+            pointer-events: none;
+            background: radial-gradient(118% 118% at 50% 47%, transparent 61.8%, rgba(4, 5, 9, 0.55) 92%, rgba(3, 4, 8, 0.72) 100%);
+            opacity: 0;
+            transition: opacity 480ms var(--md-ease-out);
+        }
     }
 }
 
@@ -189,6 +284,112 @@
     }
 }
 
+// Immersive veil: duck (front-loaded fade) -> hold (the un-animatable OS snap
+// and AMLL relayout land here at opacity 0) -> rise. Enter rises up with the
+// expo-out curve; exit settles back down with the softer cover curve. Trail
+// keyframes shift the rise start by rise x 0.382 so lyrics land last.
+@keyframes md-veil-enter-lead {
+    0% {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+        animation-timing-function: var(--md-veil-fade);
+    }
+
+    9% {
+        opacity: 0;
+    }
+
+    14% {
+        transform: translate3d(0, 6px, 0) scale(0.985);
+    }
+
+    37.5% {
+        opacity: 0;
+        transform: translate3d(0, 12px, 0) scale(0.99);
+        animation-timing-function: var(--md-ease-out);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+}
+
+@keyframes md-veil-enter-trail {
+    0% {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+        animation-timing-function: var(--md-veil-fade);
+    }
+
+    7.25% {
+        opacity: 0;
+    }
+
+    11.25% {
+        transform: translate3d(0, 6px, 0) scale(0.985);
+    }
+
+    49% {
+        opacity: 0;
+        transform: translate3d(0, 12px, 0) scale(0.99);
+        animation-timing-function: var(--md-ease-out);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+}
+
+@keyframes md-veil-exit-lead {
+    0% {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+        animation-timing-function: var(--md-veil-fade);
+    }
+
+    14.3% {
+        opacity: 0;
+        transform: translate3d(0, 0, 0) scale(0.992);
+    }
+
+    50% {
+        opacity: 0;
+        transform: translate3d(0, -10px, 0) scale(0.995);
+        animation-timing-function: var(--md-ease-cover);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+}
+
+@keyframes md-veil-exit-trail {
+    0% {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+        animation-timing-function: var(--md-veil-fade);
+    }
+
+    11.9% {
+        opacity: 0;
+        transform: translate3d(0, 0, 0) scale(0.992);
+    }
+
+    57.9% {
+        opacity: 0;
+        transform: translate3d(0, -10px, 0) scale(0.995);
+        animation-timing-function: var(--md-ease-cover);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .music-detail--container.music-detail--enter,
     .music-detail--container.music-detail--exit {
@@ -196,8 +397,19 @@
         animation-delay: 0ms !important;
     }
 
+    .music-detail--container[data-immersive-phase] .music-detail-topbar-slot,
+    .music-detail--container[data-immersive-phase] .music-detail-primary-column,
+    .music-detail--container[data-immersive-phase] .music-detail-lyric-column {
+        animation-duration: 1ms !important;
+        animation-delay: 0ms !important;
+    }
+
     .music-detail-topbar,
     .music-detail-primary-stage,
+    .music-detail-primary-stage::before,
+    .music-detail-artwork,
+    .music-detail-vinyl-cover,
+    .music-detail-overlay::after,
     .music-detail-background::before {
         transition-duration: 1ms !important;
         transition-delay: 0ms !important;
@@ -409,6 +621,24 @@
     box-shadow: none !important;
     backdrop-filter: none !important;
     transition: transform var(--md-dur-cover) var(--md-ease-cover);
+
+    // Ambient artwork light behind the cover: a static blurred copy grounds the
+    // stage in its own color (both cover styles); only opacity ever animates.
+    &::before {
+        content: "";
+        position: absolute;
+        inset: 4%;
+        z-index: -1;
+        pointer-events: none;
+        border-radius: 50%;
+        background-image: var(--music-detail-artwork);
+        background-size: cover;
+        background-position: center;
+        filter: blur(48px) saturate(150%);
+        transform: translateZ(0) scale(1.1);
+        opacity: 0.382;
+        transition: opacity 480ms var(--md-ease-out);
+    }
 
     &[data-cover-style="vinyl"] {
         width: min(100%, clamp(320px, 50vh, 520px));
