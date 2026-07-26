@@ -365,3 +365,12 @@ pending
 - **Bug**: Closed detail page reconciled the lyric subtree ~5-10x/sec; keystrokes re-normalized the whole local library.
 - **Files**: 0 files
 - **Tests**: test:runtime-performance; test:search-matching
+
+## 2026-07-26T22:16:18.433+08:00 — fix(app-config): bound legacy watch-dir migration grants
+
+- **Context-Id**: 22a7a4f9-9e0b-426c-87a4-33f62514cda5
+- **Decision**: Bound the migration grant scope instead of requiring prior authorization
+- **Decision**: Move filesystem probing off the main thread
+- **Bug**: A compromised renderer could obtain a persistent recursive grant over an entire drive.
+- **Files**: 0 files
+- **Tests**: test:app-config

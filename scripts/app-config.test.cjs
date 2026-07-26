@@ -92,4 +92,18 @@ assert.match(
     /filter\(\(item\) => isInSelectedDirs\(item\.\$\$localPath, selectedDirectories\)\)/,
 );
 
+// 旧监听目录迁移必须限制授权范围，且不得在主线程同步阻塞
+assert.match(mainSource, /function assertMigratableWatchDirectory/);
+assert.match(mainSource, /assertMigratableWatchDirectory\(realPath\)/);
+assert.match(mainSource, /Legacy watch path is a filesystem root/);
+assert.match(mainSource, /Legacy watch path is too broad/);
+assert.match(mainSource, /Legacy watch path is inside a system directory/);
+const migrationHandler = mainSource.slice(
+    mainSource.indexOf("@shared/app-config/migrate-local-watch-dirs"),
+);
+const migrationHandlerBody = migrationHandler.slice(0, migrationHandler.indexOf("@shared/app-config/reset"));
+assert.doesNotMatch(migrationHandlerBody, /statSync|realpathSync/);
+assert.match(migrationHandlerBody, /await fs\.stat\(resolved\)/);
+assert.match(migrationHandlerBody, /await fs\.realpath\(resolved\)/);
+
 console.log("app-config: all assertions passed");

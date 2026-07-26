@@ -160,6 +160,62 @@ function isStringArray(
         );
 }
 
+function normalizeComparablePath(filePath: string) {
+    const resolved = path.resolve(filePath);
+    return process.platform === "win32"
+        ? resolved.toLocaleLowerCase("en-US")
+        : resolved;
+}
+
+function isAncestorOrSame(candidate: string, descendant: string) {
+    const relative = path.relative(
+        normalizeComparablePath(candidate),
+        normalizeComparablePath(descendant),
+    );
+    return relative === "" || (
+        relative !== ".."
+        && !relative.startsWith(`..${path.sep}`)
+        && !path.isAbsolute(relative)
+    );
+}
+
+function getSystemDirectories() {
+    const candidates = process.platform === "win32"
+        ? [
+            process.env.SystemRoot,
+            process.env.ProgramFiles,
+            process.env["ProgramFiles(x86)"],
+            process.env.ProgramData,
+        ]
+        : ["/bin", "/boot", "/dev", "/etc", "/proc", "/sbin", "/sys", "/usr", "/var", "/System", "/Library", "/private"];
+    return candidates.filter((directory): directory is string => Boolean(directory));
+}
+
+/**
+ * 旧版本的监听目录没有走 dialog/拖放授权流程，迁移时只能自行判断范围。
+ * 拒绝盘符根、用户目录本身或其祖先以及系统目录，避免一次迁移换来整盘递归授权。
+ */
+function assertMigratableWatchDirectory(realPath: string) {
+    const resolved = path.resolve(realPath);
+    if (resolved === path.parse(resolved).root) {
+        throw new Error("Legacy watch path is a filesystem root");
+    }
+    let homeDirectory = "";
+    try {
+        homeDirectory = app.getPath("home");
+    } catch {
+        // 某些平台可能拿不到 home，此时跳过该项检查。
+    }
+    if (homeDirectory && isAncestorOrSame(resolved, homeDirectory)) {
+        throw new Error("Legacy watch path is too broad");
+    }
+    for (const systemDirectory of getSystemDirectories()) {
+        if (isAncestorOrSame(systemDirectory, resolved)) {
+            throw new Error("Legacy watch path is inside a system directory");
+        }
+    }
+}
+
 function validateRendererConfigValue(key: keyof IAppConfig, value: unknown) {
     if (value === null) {
         return;
@@ -384,7 +440,7 @@ class AppConfig {
             return true;
         });
 
-        ipcMain.handle("@shared/app-config/migrate-local-watch-dirs", (event, value) => {
+        ipcMain.handle("@shared/app-config/migrate-local-watch-dirs", async (event, value) => {
             assertIpcSender(event, ["main"]);
             const configured = this.getConfig("localMusic.watchDir") ?? [];
             if (configured.length) {
@@ -395,13 +451,17 @@ class AppConfig {
                 throw new Error("Legacy watch directories are not a valid path list");
             }
             const legacyDirectories = value as string[];
-            const directories = Array.from(new Set(legacyDirectories.map((directory) => {
+            const resolvedDirectories: string[] = [];
+            for (const directory of legacyDirectories) {
                 const resolved = path.resolve(directory);
-                if (!originalFs.statSync(resolved).isDirectory()) {
+                if (!(await fs.stat(resolved)).isDirectory()) {
                     throw new Error("Legacy watch path is not a directory");
                 }
-                return originalFs.realpathSync.native(resolved);
-            })));
+                const realPath = await fs.realpath(resolved);
+                assertMigratableWatchDirectory(realPath);
+                resolvedDirectories.push(realPath);
+            }
+            const directories = Array.from(new Set(resolvedDirectories));
             for (const directory of directories) {
                 grantPathAccess(directory, true);
             }
