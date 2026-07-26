@@ -348,3 +348,11 @@ pending
 - **Bug**: Nonzero [offset:] desynced word highlight and line progress across all lyric views; empty TTML lines misaligned romanization.
 - **Files**: 0 files
 - **Tests**: test:lyric-formats; test:lyric-duet
+
+## 2026-07-26T22:15:35.295+08:00 — fix(media-identity): refine multi-artist name splitting
+
+- **Context-Id**: 716adff4-ea67-4e74-a5c7-785449e8f5dd
+- **Decision**: Word-bound feat/ft and space-flanked interpunct only
+- **Bug**: 'Daft Punk' became 'Da'+'Punk' and '迈克尔·杰克逊' split into two artists.
+- **Files**: 0 files
+- **Tests**: test:music-quality-metadata

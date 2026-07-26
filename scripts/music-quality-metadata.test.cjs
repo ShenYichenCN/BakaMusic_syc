@@ -76,4 +76,40 @@ assert.deepEqual(getBestMusicQualityInfo(music({
 assert.equal(getBestMusicQualityInfo(music({ size: 1024 })), null);
 assert.equal(formatQualitySize("2048"), "2.0KB");
 
+// 拼接歌手名的拆分不能误伤单个艺人：feat/ft 必须是独立单词，间隔号只在
+// 两侧带空格时才算分隔符（"迈克尔·杰克逊" 是一个人）。
+const { getMusicArtists } = require("../src/common/music-identity.ts");
+function artistNames(overrides) {
+    return getMusicArtists({
+        id: "fixture",
+        platform: "fixture",
+        title: "Fixture",
+        ...overrides,
+    }).map((entry) => entry.name);
+}
+for (const singleName of [
+    "Daft Punk",
+    "Soft Cell",
+    "Taylor Swift",
+    "迈克尔·杰克逊",
+]) {
+    assert.deepEqual(
+        artistNames({ singerList: [{ name: singleName, id: "1" }] }),
+        [singleName],
+        singleName,
+    );
+}
+assert.deepEqual(
+    artistNames({ singerList: [{ name: "A&B", id: "1&2" }] }),
+    ["A", "B"],
+);
+assert.deepEqual(
+    artistNames({ singerList: [{ name: "A feat. B", id: "1&2" }] }),
+    ["A", "B"],
+);
+assert.deepEqual(
+    artistNames({ singerList: [{ name: "A · B", id: "1&2" }] }),
+    ["A", "B"],
+);
+
 console.log("Music quality metadata tests passed.");

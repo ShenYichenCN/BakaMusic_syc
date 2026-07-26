@@ -221,8 +221,14 @@ function collectSingerList(item: Record<string, unknown>): unknown[] {
     return [];
 }
 
-/** Multi-artist joined fields (Kuwo/Joox/…): "A&B" / "A, B" / "A/B" + ids "id1&id2". */
-const MULTI_ARTIST_SPLIT = /\s*(?:&|＆|\+|·|•|feat\.?|ft\.?|,|，|、|\/|／)\s*/i;
+/**
+ * Multi-artist joined fields (Kuwo/Joox/…): "A&B" / "A, B" / "A/B" + ids "id1&id2".
+ *
+ * feat/ft 必须是独立单词，否则 "Daft Punk" 会被切成 "Da" + "Punk"、
+ * "Soft Cell" 变成 "So" + "Cell"。间隔号只在两侧都有空格时才算分隔符：
+ * "迈克尔·杰克逊" 是一个人的音译名，而平台拼接时写作 "A · B"。
+ */
+const MULTI_ARTIST_SPLIT = /\s*[&＆+,，、/／]\s*|\s+[·•]\s+|\s+(?:feat|ft)(?:\.\s*|\s+)/i;
 
 function looksLikeMultiArtistJoined(text: string | null | undefined): boolean {
     if (!text) {
