@@ -89,18 +89,27 @@ function getBuiltinPathRoots() {
     return roots;
 }
 
+function webContentsIdOf(browserWindow: BrowserWindow | null | undefined) {
+    if (!browserWindow || browserWindow.isDestroyed()) {
+        return null;
+    }
+    return browserWindow.webContents.id;
+}
+
 function getWindowRole(event: IpcEvent): WindowRole | null {
     if (!windowManager || event.sender.isDestroyed()) {
         return null;
     }
     const senderId = event.sender.id;
-    if (windowManager.mainWindow?.webContents.id === senderId) {
+    // 主窗口可能已销毁而歌词/迷你窗口还活着：读已销毁窗口的 webContents 会抛异常，
+    // 那会把所有扩展窗口的 IPC 一并判死。
+    if (webContentsIdOf(windowManager.mainWindow) === senderId) {
         return "main";
     }
-    if (windowManager.lyricWindow?.webContents.id === senderId) {
+    if (webContentsIdOf(windowManager.lyricWindow) === senderId) {
         return "lyric";
     }
-    if (windowManager.miniModeWindow?.webContents.id === senderId) {
+    if (webContentsIdOf(windowManager.miniModeWindow) === senderId) {
         return "minimode";
     }
     return null;

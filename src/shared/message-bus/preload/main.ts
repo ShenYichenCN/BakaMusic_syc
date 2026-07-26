@@ -28,6 +28,8 @@ ipcRenderer.on("port", (e, message) => {
     // 接收到端口，使其全局可用
     if (message.type === "mount") {
         const expPort = e.ports[0];
+        // 同一扩展窗口重新建连时释放旧端口，避免悬挂的 MessagePort。
+        extPorts.get(message.payload)?.close();
         extPorts.set(message.payload, expPort);
         expPort.onmessage = (evt) => {
             const data = evt.data;

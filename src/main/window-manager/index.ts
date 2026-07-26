@@ -60,6 +60,15 @@ class WindowManager implements IWindowManager {
         lyric: boolean;
         minimode: boolean;
     } | null = null;
+    // 一旦进入退出流程，主窗口 close 不得再 preventDefault：
+    // before-quit 已不可逆地销毁各子系统，取消关闭会让 app.quit() 中止并留下僵尸进程。
+    private quitting = false;
+
+    constructor() {
+        app.on("before-quit", () => {
+            this.quitting = true;
+        });
+    }
 
     getMainWindow(): BrowserWindow {
         if (!WindowManager.mainWindow || WindowManager.mainWindow.isDestroyed()) {
@@ -353,10 +362,24 @@ class WindowManager implements IWindowManager {
         );
 
         mainWindow.on("close", (e) => {
-            if (process.platform === "win32" && AppConfig.getConfig("normal.closeBehavior") === "minimize") {
+            if (
+                !this.quitting
+                && process.platform === "win32"
+                && AppConfig.getConfig("normal.closeBehavior") === "minimize"
+            ) {
                 e.preventDefault();
                 mainWindow.hide();
                 mainWindow.setSkipTaskbar(true);
+            }
+        });
+
+        // 主窗口可以在应用存活时被销毁（macOS Cmd+W、closeBehavior=exit_app 下的
+        // Alt+F4，此时歌词/迷你窗口撑着 window-all-closed 不触发）。不清空引用的话，
+        // 托盘命令和 ipc-security 的角色判定都会碰到已销毁对象抛异常。
+        mainWindow.on("closed", () => {
+            updateWindowSizeConfig.cancel();
+            if (WindowManager.mainWindow === mainWindow) {
+                WindowManager.mainWindow = null;
             }
         });
 

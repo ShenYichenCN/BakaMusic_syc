@@ -54,6 +54,38 @@ function postMessage(message: PluginHostResponse | PluginHostCallbackRequest) {
     parentPort.postMessage(message);
 }
 
+/**
+ * 插件的返回值是任意 JS 值，而 postMessage 走 structured clone：含函数的对象
+ * （比如整个 axios response）会抛 DataCloneError。这个异常发生在 fulfillment
+ * handler 里，rejection handler 抓不到，未处理的 rejection 会直接终结这个被
+ * 所有插件共用的 host。所以先尝试原样发送，失败则退回 JSON 净化，再失败才报错。
+ */
+function respond(requestId: string, result: unknown) {
+    try {
+        postMessage({ type: "response", requestId, result });
+        return;
+    } catch {
+        // 继续尝试净化后的形状。
+    }
+    try {
+        postMessage({
+            type: "response",
+            requestId,
+            result: result === undefined
+                ? undefined
+                : JSON.parse(JSON.stringify(result)),
+        });
+    } catch (error) {
+        postMessage({
+            type: "response",
+            requestId,
+            error: toErrorPayload(
+                new Error(`Plugin result is not transferable: ${toErrorPayload(error).message}`),
+            ),
+        });
+    }
+}
+
 function toErrorPayload(error: unknown) {
     const normalized = error instanceof Error ? error : new Error(String(error));
     return {
@@ -388,6 +420,19 @@ async function handleRequest(request: PluginHostRequest) {
     }
 }
 
+// host 由所有插件共用：一个插件的未处理 rejection 不应该让进程退出，
+// 那会拒绝掉其他插件所有在途调用并触发整体重启。stderr 会被 main 记录。
+process.on("unhandledRejection", (reason) => {
+    process.stderr.write(
+        `[plugin-host] unhandled rejection: ${toErrorPayload(reason).stack ?? ""}\n`,
+    );
+});
+process.on("uncaughtException", (error) => {
+    process.stderr.write(
+        `[plugin-host] uncaught exception: ${toErrorPayload(error).stack ?? ""}\n`,
+    );
+});
+
 parentPort.on("message", (event) => {
     const message = event.data as PluginHostRequest | PluginHostCallbackResponse;
     if (message?.type === "host-response") {
@@ -408,11 +453,7 @@ parentPort.on("message", (event) => {
         return;
     }
     void Promise.resolve(handleRequest(message)).then(
-        (result) => postMessage({
-            type: "response",
-            requestId: message.requestId,
-            result,
-        }),
+        (result) => respond(message.requestId, result),
         (error) => postMessage({
             type: "response",
             requestId: message.requestId,

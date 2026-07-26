@@ -191,12 +191,25 @@ export default class PluginHostClient {
         });
         this.startResourceMonitor(child);
 
+        // 逐个插件容错：一个插件在重新执行时抛错不能中断整个恢复流程，
+        // 否则 ensureStarted 之后会因为 child.pid 已存在而短路，排在它后面的
+        // 插件永远不会被载入（调用一律返回 "Plugin is not loaded"）。
         for (const [hash, registration] of this.registrations) {
-            await this.requestRaw<PluginHostDescriptor>(child, "load", {
-                hash,
-                code: registration.code,
-                environment: registration.environment,
-            }, LOAD_TIMEOUT_MS);
+            try {
+                await this.requestRaw<PluginHostDescriptor>(child, "load", {
+                    hash,
+                    code: registration.code,
+                    environment: registration.environment,
+                }, LOAD_TIMEOUT_MS);
+            } catch (error) {
+                logger.logError("Plugin host failed to restore a plugin", toError(error), {
+                    hash,
+                });
+                if (this.child !== child || !child.pid) {
+                    // host 本身已经死了（例如 load 超时导致被 kill），继续恢复没有意义。
+                    throw error;
+                }
+            }
         }
     }
 

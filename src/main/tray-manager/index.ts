@@ -273,7 +273,6 @@ class TrayManager {
             label: t("common.exit"),
             role: process.platform === "win32" ? undefined : "quit",
             click() {
-                windowManager.mainWindow?.removeAllListeners?.();
                 app.quit();
             },
         });

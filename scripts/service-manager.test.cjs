@@ -53,4 +53,65 @@ const trayManagerSource = fs.readFileSync(path.join(
 assert.doesNotMatch(utilityMainSource, /app\.exit\(/);
 assert.doesNotMatch(trayManagerSource, /app\.exit\(/);
 
+// 退出流程：主窗口 close 不得在 quit 期间 preventDefault，
+// 否则 before-quit 已销毁子系统而 app.quit() 被取消，留下僵尸进程。
+const windowManagerSource = fs.readFileSync(path.join(
+    __dirname,
+    "../src/main/window-manager/index.ts",
+), "utf8");
+assert.match(windowManagerSource, /app\.on\("before-quit", \(\) => \{\s*this\.quitting = true;/);
+assert.match(windowManagerSource, /!this\.quitting\s*&&\s*process\.platform === "win32"/);
+// 托盘退出不再需要 removeAllListeners 绕过 close 处理器
+assert.doesNotMatch(trayManagerSource, /removeAllListeners/);
+
+// 主窗口可能在应用存活时被销毁（macOS Cmd+W、exit_app 下 Alt+F4 而歌词窗口仍开着）：
+// 必须清空引用，并且所有跨窗口调用点都要挡住已销毁对象。
+assert.match(windowManagerSource, /mainWindow\.on\("closed", \(\) => \{/);
+assert.match(windowManagerSource, /WindowManager\.mainWindow = null;/);
+
+const messageBusSource = fs.readFileSync(path.join(
+    __dirname,
+    "../src/shared/message-bus/main.ts",
+), "utf8");
+assert.match(messageBusSource, /if \(mainWindow && !mainWindow\.isDestroyed\(\)\) \{/);
+// 主窗口重建后要为已存在的扩展窗口重新建端口，否则歌词/迷你窗口永久失联。
+assert.match(messageBusSource, /for \(const bWindow of this\.windowManager\.getExtensionWindows\(\)\) \{/);
+assert.match(messageBusSource, /private unmountBoundWindows = new WeakSet<BrowserWindow>\(\)/);
+assert.match(messageBusSource, /const currentMainWindow = this\.windowManager\.mainWindow;/);
+
+const extensionPreloadSource = fs.readFileSync(path.join(
+    __dirname,
+    "../src/shared/message-bus/preload/extension.ts",
+), "utf8");
+assert.match(extensionPreloadSource, /extPort\.close\(\);/);
+assert.match(extensionPreloadSource, /let subscribedKeys/);
+
+const ipcSecuritySource = fs.readFileSync(path.join(
+    __dirname,
+    "../src/shared/ipc-security/main.ts",
+), "utf8");
+assert.match(ipcSecuritySource, /function webContentsIdOf/);
+assert.match(ipcSecuritySource, /browserWindow\.isDestroyed\(\)/);
+assert.doesNotMatch(ipcSecuritySource, /windowManager\.mainWindow\?\.webContents\.id/);
+
+// 插件 host 由所有插件共用：单个插件的不可克隆返回值或未处理 rejection
+// 不得终结进程，恢复注册时也不能因为一个插件失败就中断。
+const pluginHostSource = fs.readFileSync(path.join(
+    __dirname,
+    "../src/shared/plugin-manager/utility/plugin-host.ts",
+), "utf8");
+assert.match(pluginHostSource, /function respond\(requestId: string, result: unknown\)/);
+assert.match(pluginHostSource, /Plugin result is not transferable/);
+assert.match(pluginHostSource, /process\.on\("unhandledRejection"/);
+assert.match(pluginHostSource, /process\.on\("uncaughtException"/);
+
+const pluginHostClientSource = fs.readFileSync(path.join(
+    __dirname,
+    "../src/shared/plugin-manager/main/plugin-host-client.ts",
+), "utf8");
+assert.match(
+    pluginHostClientSource,
+    /Plugin host failed to restore a plugin/,
+);
+
 console.log("service-manager: all assertions passed");

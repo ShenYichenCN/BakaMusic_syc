@@ -14,12 +14,33 @@ let connected = false;
 let pingTimer: NodeJS.Timeout | null = null;
 // 缓存未建立连接时的消息
 const cachedMessages: IPortMessage[] = [];
+// 记录本窗口订阅的字段，端口重建后需要重新登记
+let subscribedKeys: (keyof IAppState)[] | null = null;
 
 ipcRenderer.on("port", (e) => {
-    extPort = e.ports[0];
-    if (!extPort) {
+    const nextPort = e.ports[0];
+    if (!nextPort) {
         return;
     }
+    // 主窗口重建后主进程会重新派发端口：先彻底断开旧端口，避免 ping 定时器
+    // 泄漏，并把订阅重新排队，让新的主 renderer 重新登记本窗口。
+    if (pingTimer) {
+        clearInterval(pingTimer);
+        pingTimer = null;
+    }
+    if (extPort) {
+        extPort.onmessage = null;
+        extPort.close();
+        connected = false;
+        if (subscribedKeys) {
+            cachedMessages.push({
+                type: "subscribeAppState",
+                payload: subscribedKeys,
+                timestamp: Date.now(),
+            });
+        }
+    }
+    extPort = nextPort;
     pingTimer = setInterval(() => {
         // 向主进程发送 ping
         extPort?.postMessage({
@@ -70,6 +91,7 @@ function sendCommand<T extends keyof ICommand>(command: T, data?: ICommand[T]) {
 }
 
 function subscribeAppState(keys: (keyof IAppState)[]) {
+    subscribedKeys = keys;
     const message: IPortMessage = {
         type: "subscribeAppState",
         payload: keys,

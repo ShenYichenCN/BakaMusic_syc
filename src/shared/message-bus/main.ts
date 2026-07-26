@@ -17,6 +17,8 @@ class MessageBus {
 
     private windowManager!: IWindowManager;
     private extensionWindowIds = new Set<number>();
+    /** 已绑定 close→unmount 通知的扩展窗口，避免重建端口时重复注册。 */
+    private unmountBoundWindows = new WeakSet<BrowserWindow>();
     private appState: IAppState = {
         musicItem: null,
         playerState: PlayerState.None,
@@ -38,6 +40,12 @@ class MessageBus {
         windowManager.on("WindowCreated", (data) => {
             if (data.windowName !== "main") {
                 this.createPortForExtensionWindow(data.browserWindow);
+                return;
+            }
+            // 主窗口可以在歌词/迷你窗口存活时被销毁并重建。旧端口的对端在已死的
+            // renderer 里，不重新建连的话扩展窗口会永久失去状态同步和指令通道。
+            for (const bWindow of this.windowManager.getExtensionWindows()) {
+                this.createPortForExtensionWindow(bWindow);
             }
         });
 
@@ -84,7 +92,9 @@ class MessageBus {
      */
     public sendCommand<T extends keyof ICommand>(command: T, data?: ICommand[T]) {
         const mainWindow = this.windowManager.mainWindow;
-        if (mainWindow) {
+        // 托盘菜单和 deep link 会在主窗口销毁后继续发指令，访问已销毁窗口的
+        // webContents 会抛 "Object has been destroyed"。
+        if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send("@shared/message-bus/message", {
                 type: "command",
                 payload: {
@@ -103,7 +113,12 @@ class MessageBus {
     // 创建通信端口
     private createPortForExtensionWindow(bWindow: BrowserWindow) {
         const mainWindow = this.windowManager.mainWindow;
-        if (!mainWindow || bWindow === mainWindow) {
+        if (
+            !mainWindow
+            || mainWindow.isDestroyed()
+            || bWindow === mainWindow
+            || bWindow.isDestroyed()
+        ) {
             return;
         }
         const { port1, port2 } = new MessageChannelMain();
@@ -118,12 +133,22 @@ class MessageBus {
         }, [port1]);
 
         bWindow.webContents.postMessage("port", null, [port2]);
+
+        // 重建端口时不要叠加 close 监听；unmount 通知必须取当前主窗口，
+        // 否则会 post 到已销毁的旧主窗口上抛异常。
+        if (this.unmountBoundWindows.has(bWindow)) {
+            return;
+        }
+        this.unmountBoundWindows.add(bWindow);
         bWindow.on("close", () => {
-            mainWindow.webContents.postMessage("port", {
-                payload: extWindowId,
-                type: "unmount",
-                timestamp: Date.now(),
-            });
+            const currentMainWindow = this.windowManager.mainWindow;
+            if (currentMainWindow && !currentMainWindow.isDestroyed()) {
+                currentMainWindow.webContents.postMessage("port", {
+                    payload: extWindowId,
+                    type: "unmount",
+                    timestamp: Date.now(),
+                });
+            }
             this.extensionWindowIds.delete(extWindowId);
         });
 

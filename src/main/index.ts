@@ -167,7 +167,8 @@ app.whenReady().then(async () => {
             const musicItem = patch.musicItem;
             const mainWindow = windowManager.mainWindow;
 
-            if (mainWindow) {
+            // 主窗口可能已销毁而应用仍存活（歌词窗口撑着），此时不能再操作它。
+            if (mainWindow && !mainWindow.isDestroyed()) {
                 const thumbStyle = AppConfig.getConfig("normal.taskbarThumb");
                 if (process.platform === "win32" && thumbStyle === "artwork") {
                     ThumbBarUtil.setThumbImage(mainWindow, musicItem?.artwork ?? "");
@@ -186,7 +187,7 @@ app.whenReady().then(async () => {
 
             if (process.platform === "win32") {
                 const mainWindow = windowManager.mainWindow;
-                if (mainWindow) {
+                if (mainWindow && !mainWindow.isDestroyed()) {
                     ThumbBarUtil.setThumbBarButtons(
                         mainWindow,
                         isPlaybackActive(playerState),

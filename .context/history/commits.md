@@ -309,3 +309,14 @@ pending
 - **Bug**: npm test failed on a clean tree at theme-contract and toolchain.
 - **Files**: 0 files
 - **Tests**: test:theme-contract; test:toolchain
+
+## 2026-07-26T22:14:17.315+08:00 — fix(main): survive main-window destruction and bad plugin results
+
+- **Context-Id**: 051e8522-9ed8-4bd8-81e1-859f3ac8f13f
+- **Decision**: Latch a quitting flag on before-quit
+- **Decision**: Re-create extension ports and guard destroyed windows everywhere
+- **Decision**: Make the shared plugin host tolerate one bad plugin
+- **Bug**: Install-update on default Windows config left a hidden zombie process while the installer ran against locked files.
+- **Bug**: Tray commands crashed and all lyric/minimode IPC was denied after the main window closed with the app alive.
+- **Files**: 0 files
+- **Tests**: test:service-manager; package && npm run smoke:package
