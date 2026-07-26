@@ -47,7 +47,8 @@ export default async function () {
     dropHandler();
     clearDefaultBehavior();
     setupCommandAndEvents();
-    setupDeviceChange();
+    // 音频设备移除策略由 TrackPlayer 基于 libmpv 的设备列表处理：
+    // Chromium 在未授权媒体权限时只暴露每类一个占位设备，数量比较永远不会变化。
     await Downloader.setupDownloader();
     // 本地服务
     await ServiceManager.setup();
@@ -359,19 +360,3 @@ function setupCommandAndEvents() {
     });
 }
 
-async function setupDeviceChange() {
-    const getAudioDevices = async (): Promise<MediaDeviceInfo[]> =>
-        await navigator.mediaDevices.enumerateDevices().catch((): [] => []);
-    let devices = (await getAudioDevices()) || [];
-
-    navigator.mediaDevices.ondevicechange = async () => {
-        const newDevices = await getAudioDevices();
-        if (
-            newDevices.length < devices.length &&
-            AppConfig.getConfig("playMusic.whenDeviceRemoved") === "pause"
-        ) {
-            trackPlayer.pause();
-        }
-        devices = newDevices;
-    };
-}

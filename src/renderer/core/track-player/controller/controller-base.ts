@@ -15,5 +15,7 @@ export default class ControllerBase {
     public onSpeedChange?: (speed: number) => void;
     // 升降调改变（半音）
     public onPitchChange?: (semitones: number) => void;
+    // 音频输出设备增减（播放本身可能仍在继续）
+    public onAudioDevicesChanged?: (change: { removed: boolean; added: boolean }) => void;
 
 }

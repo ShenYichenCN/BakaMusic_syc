@@ -1,4 +1,4 @@
-import { CurrentTime, ICurrentLyric, PlayerEvents } from "./enum";
+import { CurrentTime, ErrorReason, ICurrentLyric, PlayerEvents } from "./enum";
 import shuffle from "lodash.shuffle";
 import {
     addSortProperty,
@@ -31,6 +31,7 @@ import { createUniqueMap } from "@/common/unique-map";
 import { getLinkedLyric } from "@renderer/core/link-lyric";
 import { fsUtil } from "@shared/utils/renderer";
 import PluginManager from "@shared/plugin-manager/renderer";
+import nativePlayback from "@shared/native-playback/renderer";
 import {
     recordListeningDuration,
     recordPlayback,
@@ -51,6 +52,9 @@ import {
 import { shouldPersistPlaybackProgress } from "./progress-persistence";
 
 const PROGRESS_PERSIST_INTERVAL_MS = 3_000;
+
+/** 同一次设备拔出会同时产生错误和列表变化，这段时间内只处理一次。 */
+const AUDIO_DEVICE_LOSS_GUARD_MS = 5_000;
 
 const {
     musicQueueStore,
@@ -189,6 +193,18 @@ class TrackPlayer {
     private lyricLoadGeneration = 0;
 
     private lyricLoadAbortController: AbortController | null = null;
+
+    /** 用户选择的输出设备（空字符串表示跟随系统默认）。 */
+    private preferredSinkId = "";
+
+    /** 首选设备消失后是否已临时回落到系统默认输出。 */
+    private sinkFallbackActive = false;
+
+    /** 上次应用设备移除策略的时间，用于合并同一次拔出产生的多个信号。 */
+    private audioDeviceLossAt = Number.NEGATIVE_INFINITY;
+
+    /** 上次因设备丢失自动重载音源的时间，用于避免回落后仍失败时反复重载。 */
+    private audioDeviceReloadAt = Number.NEGATIVE_INFINITY;
 
     constructor() {
         this.indexMap = createIndexMap();
@@ -366,8 +382,22 @@ class TrackPlayer {
             this.setPlayerState(state);
         };
 
-        audioController.onError = async (_type, reason) => {
+        audioController.onError = async (type, reason) => {
+            if (type === ErrorReason.AudioDeviceUnavailable) {
+                // 输出设备没了，跟当前歌曲无关：走设备策略，不能触发跳过下一首
+                await this.handleAudioDeviceLoss("error", reason);
+                return;
+            }
             this.ee.emit(PlayerEvents.Error, audioController.musicItem, reason);
+        };
+
+        audioController.onAudioDevicesChanged = ({ removed, added }) => {
+            if (removed) {
+                void this.handleAudioDeviceLoss("removed");
+            }
+            if (added) {
+                void this.restorePreferredAudioDevice();
+            }
         };
 
 
@@ -428,9 +458,7 @@ class TrackPlayer {
         this.setCurrentMusic(restoredMusic);
         this.currentIndex = playlistIndex;
 
-        if (deviceId) {
-            this.setAudioOutputDevice(deviceId);
-        }
+        void this.setAudioOutputDevice(deviceId);
 
         // Windows WASAPI exclusive: apply preference before first play.
         if (AppConfig.getConfig("playMusic.wasapiExclusive")) {
@@ -1020,10 +1048,112 @@ class TrackPlayer {
     }
 
     public async setAudioOutputDevice(deviceId?: string) {
+        // "" / "auto" / "default" 都表示跟随系统默认输出
+        this.preferredSinkId = !deviceId || deviceId === "auto" || deviceId === "default"
+            ? ""
+            : deviceId;
+        this.sinkFallbackActive = false;
+        await this.applyAudioOutputDevice(this.preferredSinkId);
+    }
+
+    private async applyAudioOutputDevice(deviceId: string) {
         try {
-            await this.audioController.setSinkId(deviceId ?? "");
+            await this.audioController.setSinkId(deviceId);
         } catch (e) {
             logger.logError("设置音频输出设备失败", toError(e));
+        }
+    }
+
+    /**
+     * 输出设备不可用时的统一入口。
+     *
+     * - `removed`：设备列表少了一项，但播放可能仍在继续（`auto` 会跟随新的默认
+     *   设备），只需要按偏好决定停不停。
+     * - `error`：libmpv 因为打不开设备结束了当前文件，音源必须重新载入，否则连
+     *   播放按钮都点不动。
+     *
+     * 同一次拔出往往两种信号都会来，且先后顺序不固定：策略部分用时间窗去重，恢复
+     * 部分只受重载节流限制，不会被去重吞掉。
+     */
+    private async handleAudioDeviceLoss(
+        cause: "error" | "removed",
+        reason?: unknown,
+    ) {
+        const now = Date.now();
+        const duplicated = now - this.audioDeviceLossAt < AUDIO_DEVICE_LOSS_GUARD_MS;
+        this.audioDeviceLossAt = now;
+        const keepPlaying = AppConfig.getConfig("playMusic.whenDeviceRemoved") !== "pause";
+
+        if (cause === "removed") {
+            if (duplicated) {
+                return;
+            }
+            if (!keepPlaying && isPlaybackActive(this.playerState)) {
+                this.pause();
+            }
+            await this.fallbackToDefaultOutputDevice();
+            return;
+        }
+
+        logger.logInfo("audio output device is unavailable", {
+            reason: reason instanceof Error ? reason.message : reason,
+            deviceId: this.preferredSinkId || "auto",
+        });
+
+        // 回落之后如果还是打不开设备，就不再重试，避免重载风暴
+        if (now - this.audioDeviceReloadAt < AUDIO_DEVICE_LOSS_GUARD_MS) {
+            this.setPlayerState(PlayerState.Paused);
+            return;
+        }
+        this.audioDeviceReloadAt = now;
+
+        const resumeAt = this.progress.currentTime ?? 0;
+        await this.fallbackToDefaultOutputDevice();
+
+        // autoPlay 省略时沿用重载前的播放意图：错误已经把 playerState 改成
+        // Paused，这里读不出用户到底是不是在播。
+        const reloaded = this.audioController.reloadTrack?.({
+            seekTo: resumeAt,
+            autoPlay: keepPlaying ? undefined : false,
+        });
+        if (!reloaded) {
+            this.setPlayerState(PlayerState.Paused);
+        }
+    }
+
+    /** 首选设备已经消失时临时改用系统默认输出，否则后面每一首都会打不开设备。 */
+    private async fallbackToDefaultOutputDevice() {
+        if (!this.preferredSinkId || this.sinkFallbackActive) {
+            return;
+        }
+        const devices = await this.listNativeAudioDeviceIds();
+        if (devices?.has(this.preferredSinkId)) {
+            return;
+        }
+        this.sinkFallbackActive = true;
+        await this.applyAudioOutputDevice("");
+    }
+
+    /** 首选设备重新出现时切回去，避免回落状态一直生效。 */
+    private async restorePreferredAudioDevice() {
+        if (!this.sinkFallbackActive || !this.preferredSinkId) {
+            return;
+        }
+        const devices = await this.listNativeAudioDeviceIds();
+        if (!devices?.has(this.preferredSinkId)) {
+            return;
+        }
+        this.sinkFallbackActive = false;
+        await this.applyAudioOutputDevice(this.preferredSinkId);
+    }
+
+    private async listNativeAudioDeviceIds() {
+        try {
+            const devices = await nativePlayback.listAudioDevices();
+            return new Set(devices.map((device) => device.id));
+        } catch (e) {
+            logger.logInfo("list audio devices failed", toError(e));
+            return null;
         }
     }
 

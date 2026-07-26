@@ -5,6 +5,13 @@ export type NativePlaybackState =
     | "paused"
     | "error";
 
+/**
+ * Why an `error` snapshot happened.
+ * `audio-device` means the output endpoint went away (unplugged headphones,
+ * disabled device); the media itself is still fine and must not be skipped.
+ */
+export type NativePlaybackErrorKind = "playback" | "audio-device";
+
 export interface INativePlaybackSnapshot {
     sourceId: string;
     state: NativePlaybackState;
@@ -14,6 +21,12 @@ export interface INativePlaybackSnapshot {
     speed: number;
     ended?: boolean;
     error?: string;
+    /** Only meaningful when `state` is `error`. Defaults to `playback`. */
+    errorKind?: NativePlaybackErrorKind;
+    /** One-shot: an audio output device disappeared since the previous snapshot. */
+    audioDeviceRemoved?: boolean;
+    /** One-shot: an audio output device appeared since the previous snapshot. */
+    audioDeviceAdded?: boolean;
 }
 
 export type NativePlaybackCommand =

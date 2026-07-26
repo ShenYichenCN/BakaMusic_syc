@@ -4,6 +4,7 @@ import type {
     INativeAudioOutputDevice,
     INativePlaybackCapabilities,
     INativePlaybackSnapshot,
+    NativePlaybackErrorKind,
     NativePlaybackRuntimeCommand,
     NativePlaybackState,
 } from "../common";
@@ -50,6 +51,9 @@ const MPV_EVENT_QUEUE_OVERFLOW = 24;
 const MPV_END_FILE_REASON_EOF = 0;
 const MPV_END_FILE_REASON_ERROR = 4;
 const MPV_ERROR_PROPERTY_UNAVAILABLE = -10;
+const MPV_ERROR_AO_INIT_FAILED = -14;
+/** Audio output devices are re-read at most this often while a source is loaded. */
+const DEVICE_PROBE_INTERVAL = 1000;
 
 const parentPort = process.parentPort;
 const runtimeDirectory = process.env.BAKAMUSIC_MPV_DIR;
@@ -290,9 +294,14 @@ let lastTime = 0;
 let lastDuration = 0;
 let lastSnapshotKey = "";
 let lastError = "";
+let lastErrorKind: NativePlaybackErrorKind = "playback";
 let endedPending = false;
 let pendingSeek: number | null = null;
 let disposed = false;
+let knownAudioDeviceIds: Set<string> | null = null;
+let lastDeviceProbeAt = 0;
+let deviceRemovedPending = false;
+let deviceAddedPending = false;
 
 function runCommand(...args: string[]) {
     checkMpv(api.command(player, [...args, null]), `libmpv command ${args[0]}`);
@@ -332,6 +341,68 @@ function applySeek(seconds: number) {
     lastTime = seconds;
 }
 
+function readAudioDeviceIds() {
+    const ids = new Set<string>();
+    for (const device of listAudioDevices()) {
+        if (device.id && device.id !== "auto") {
+            ids.add(device.id);
+        }
+    }
+    return ids;
+}
+
+/**
+ * Watch output endpoints while a source is loaded so the renderer can honour the
+ * "when device removed" preference even when playback survives the change
+ * (`audio-device=auto` follows the new system default instead of failing).
+ * The baseline is dropped on load/stop so idle gaps never look like a removal.
+ */
+function probeAudioDevices(now: number) {
+    if (now - lastDeviceProbeAt < DEVICE_PROBE_INTERVAL) {
+        return;
+    }
+    lastDeviceProbeAt = now;
+    const ids = readAudioDeviceIds();
+    const previous = knownAudioDeviceIds;
+    knownAudioDeviceIds = ids;
+    if (!previous) {
+        return;
+    }
+    for (const id of previous) {
+        if (!ids.has(id)) {
+            deviceRemovedPending = true;
+            break;
+        }
+    }
+    for (const id of ids) {
+        if (!previous.has(id)) {
+            deviceAddedPending = true;
+            break;
+        }
+    }
+}
+
+function resetAudioDeviceProbe() {
+    knownAudioDeviceIds = null;
+    lastDeviceProbeAt = 0;
+    deviceRemovedPending = false;
+    deviceAddedPending = false;
+}
+
+/** libmpv reports a dead output endpoint as a plain playback failure. */
+function isAudioDeviceFailure(errorCode: number) {
+    if (errorCode === MPV_ERROR_AO_INIT_FAILED) {
+        return true;
+    }
+    if (currentAudioDevice === "auto") {
+        return false;
+    }
+    const ids = readAudioDeviceIds();
+    // An empty list means the enumeration itself failed; do not turn a media
+    // failure into a device failure on a guess.
+    return ids.size > 0 && !ids.has(currentAudioDevice);
+}
+
 function processEvents() {
     while (!disposed) {
         const eventPointer = api.waitEvent(player, 0);
@@ -344,6 +415,7 @@ function processEvents() {
         }
         if (event.eventId === MPV_EVENT_SHUTDOWN) {
             lastError = "libmpv core shut down unexpectedly";
+            lastErrorKind = "playback";
             return;
         }
         if (event.eventId === MPV_EVENT_FILE_LOADED && pendingSeek !== null) {
@@ -361,6 +433,9 @@ function processEvents() {
                 endedPending = true;
             } else if (endFile.reason === MPV_END_FILE_REASON_ERROR) {
                 lastError = mpvError(endFile.error, "libmpv playback").message;
+                lastErrorKind = isAudioDeviceFailure(endFile.error)
+                    ? "audio-device"
+                    : "playback";
             }
             continue;
         }
@@ -378,6 +453,7 @@ function processEvents() {
         }
         if (event.eventId === MPV_EVENT_QUEUE_OVERFLOW) {
             lastError = "libmpv event queue overflow";
+            lastErrorKind = "playback";
         }
     }
 }
@@ -416,7 +492,9 @@ function readSnapshot(): INativePlaybackSnapshot {
         volume,
         speed: playbackSpeed,
         ...(ended ? { ended: true } : {}),
-        ...(lastError ? { error: lastError } : {}),
+        ...(lastError ? { error: lastError, errorKind: lastErrorKind } : {}),
+        ...(deviceRemovedPending ? { audioDeviceRemoved: true } : {}),
+        ...(deviceAddedPending ? { audioDeviceAdded: true } : {}),
     };
 }
 
@@ -425,6 +503,7 @@ function postSnapshot(force = false) {
         return;
     }
     processEvents();
+    probeAudioDevices(Date.now());
     const snapshot = readSnapshot();
     const snapshotKey = JSON.stringify(snapshot);
     if (force || snapshotKey !== lastSnapshotKey) {
@@ -432,6 +511,8 @@ function postSnapshot(force = false) {
         parentPort.postMessage({ type: "snapshot", snapshot });
     }
     endedPending = false;
+    deviceRemovedPending = false;
+    deviceAddedPending = false;
 }
 
 function assertCurrentSource(command: NativePlaybackRuntimeCommand) {
@@ -473,9 +554,11 @@ function handleCommand(command: NativePlaybackRuntimeCommand) {
             lastDuration = 0;
             lastSnapshotKey = "";
             lastError = "";
+            lastErrorKind = "playback";
             endedPending = false;
             pendingSeek = null;
             playbackSpeed = 1;
+            resetAudioDeviceProbe();
             setProperty("pause", "yes");
             applyRequestHeaders(
                 command.sourceType === "location" ? command.headers : undefined,
@@ -488,6 +571,7 @@ function handleCommand(command: NativePlaybackRuntimeCommand) {
             }
             endedPending = false;
             lastError = "";
+            lastErrorKind = "playback";
             setProperty("pause", "no");
             break;
         case "pause":
@@ -500,8 +584,10 @@ function handleCommand(command: NativePlaybackRuntimeCommand) {
             lastDuration = 0;
             lastSnapshotKey = "";
             lastError = "";
+            lastErrorKind = "playback";
             endedPending = false;
             pendingSeek = null;
+            resetAudioDeviceProbe();
             return;
         case "seek":
             applySeek(command.seconds);

@@ -389,3 +389,16 @@ pending
 - **Bug**: A compromised renderer could push multi-megabyte Map/Set payloads past the 512KB app-config cap into main-process memory.
 - **Files**: 14 files
 - **Tests**: npm exec tsc -- --noEmit; npm exec eslint -- ./src; npm test
+
+## 2026-07-27T00:45:34.408+08:00 — fix(playback): stop skip loop when the output device disappears
+
+- **Context-Id**: 82b55143-5f3a-4805-8ddd-8487991a0265
+- **Decision**: Classify a dead output endpoint as its own error kind in the libmpv host
+- **Decision**: Poll audio-device-list in the host instead of listening to Chromium devicechange
+- **Decision**: Fall back to the default output and reload the track rather than only pausing
+- **Decision**: Deduplicate the device-loss policy but never the recovery
+- **Bug**: With a specific output device selected, unplugging it made the player skip through the whole queue instead of stopping, even with "pause when the audio device is removed" chosen.
+- **Bug**: The "pause when the audio device is removed" preference had no effect at all.
+- **Bug**: Switching the output device back to Default left playback on the previously selected device after the next track loaded.
+- **Files**: 9 files
+- **Tests**: npm exec tsc -- --noEmit; npm exec eslint -- ./src; npm test; npm run smoke:native; node scratchpad/mpv-device-list.cjs (libmpv audio-device-list probe)

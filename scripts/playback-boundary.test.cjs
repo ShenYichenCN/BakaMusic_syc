@@ -331,6 +331,56 @@ function testPlaybackRecoveryContract() {
     );
 }
 
+function testAudioDeviceLossContract() {
+    // 耳机拔出时 libmpv 会以错误结束当前文件。若把它当成普通播放失败上报，
+    // "播放失败时跳过" 会让整个队列一首接一首地跳过去。
+    const nativeHost = read(
+        "src/shared/native-playback/utility/native-playback-host.ts",
+    );
+    assert.match(nativeHost, /const MPV_ERROR_AO_INIT_FAILED = -14;/);
+    assert.match(nativeHost, /function isAudioDeviceFailure\(errorCode: number\)/);
+    assert.match(
+        nativeHost,
+        /lastErrorKind = isAudioDeviceFailure\(endFile\.error\)\s*\?\s*"audio-device"\s*:\s*"playback";/,
+    );
+    assert.match(nativeHost, /error: lastError, errorKind: lastErrorKind/);
+    // 设备探测只在有 source 时进行，并在 load/stop 时丢弃基线，避免空闲期误报。
+    assert.match(nativeHost, /probeAudioDevices\(Date\.now\(\)\)/);
+    assert.match(nativeHost, /function resetAudioDeviceProbe\(\)/);
+
+    const nativeController = read(
+        "src/renderer/core/track-player/controller/libmpv-audio-controller.ts",
+    );
+    assert.match(
+        nativeController,
+        /snapshot\.errorKind === "audio-device"\s*\?\s*ErrorReason\.AudioDeviceUnavailable/,
+    );
+    assert.match(nativeController, /reloadTrack\(options: \{ seekTo\?: number; autoPlay\?: boolean \}/);
+    // 重载后 playerState 已经是 Paused，播放意图只能取自控制器自身。
+    assert.match(nativeController, /options\.autoPlay \?\? this\.playRequested/);
+
+    const trackPlayer = read("src/renderer/core/track-player/index.ts");
+    const onErrorBlock = trackPlayer.slice(
+        trackPlayer.indexOf("audioController.onError = "),
+        trackPlayer.indexOf("audioController.onAudioDevicesChanged = "),
+    );
+    assert.ok(onErrorBlock.length > 0);
+    assert.match(onErrorBlock, /type === ErrorReason\.AudioDeviceUnavailable/);
+    // 设备错误必须在 emit 之前 return，否则仍会走 playError=skip 分支。
+    assert.ok(
+        onErrorBlock.indexOf("handleAudioDeviceLoss") <
+            onErrorBlock.indexOf("this.ee.emit(PlayerEvents.Error"),
+    );
+    assert.match(trackPlayer, /playMusic\.whenDeviceRemoved"\) !== "pause"/);
+    assert.match(trackPlayer, /const AUDIO_DEVICE_LOSS_GUARD_MS = /);
+
+    // Chromium 在未授权媒体权限时每类只暴露一个占位设备，设备数量永远不变，
+    // 因此不能再用 enumerateDevices 的长度判断设备移除。
+    const bootstrap = read("src/renderer/document/bootstrap.ts");
+    assert.doesNotMatch(bootstrap, /enumerateDevices/);
+    assert.doesNotMatch(bootstrap, /whenDeviceRemoved/);
+}
+
 testLocalMediaUrlContract();
 testLocalMediaRanges();
 testLocalFormatCoverage();
@@ -338,5 +388,6 @@ testLyricDecryptionCompatibility();
 testManagedMediaProxyRouting();
 testPlaybackBoundaryIntegration();
 testPlaybackRecoveryContract();
+testAudioDeviceLossContract();
 
 console.log("playback-boundary: all assertions passed");

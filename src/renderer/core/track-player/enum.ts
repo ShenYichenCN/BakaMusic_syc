@@ -6,6 +6,8 @@ export enum ErrorReason {
     EmptyResource,
     /** 不支持的类型 */
     UnsupportedResource,
+    /** 输出设备不可用（如耳机断开），音源本身没有问题 */
+    AudioDeviceUnavailable,
 }
 
 export interface ICurrentLyric {

@@ -15,6 +15,12 @@ export interface IAudioController {
     // 设置音源
     setTrackSource(trackSource: IMusic.IMusicSource, musicItem: IMusic.IMusicItem): void;
 
+    /**
+     * 重新打开当前音源（如输出设备移除后回落到默认设备）。
+     * 没有可恢复的音源时返回 false。
+     */
+    reloadTrack?(options?: { seekTo?: number; autoPlay?: boolean }): boolean;
+
     // 暂停
     pause(): void;
 
@@ -64,6 +70,8 @@ export interface IAudioController {
     onSpeedChange?: (speed: number) => void;
     // 升降调改变（半音）
     onPitchChange?: (semitones: number) => void;
+    // 音频输出设备增减
+    onAudioDevicesChanged?: (change: { removed: boolean; added: boolean }) => void;
 
 }
 

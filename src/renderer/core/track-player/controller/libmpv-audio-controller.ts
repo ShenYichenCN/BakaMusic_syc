@@ -15,6 +15,8 @@ class LibmpvAudioController extends ControllerBase implements IAudioController {
     private sourceId = "";
     private sourceAssigned = false;
     private sourceLoaded = false;
+    /** Kept so the current track can be re-opened after an output device change. */
+    private trackSource: IMusic.IMusicSource | null = null;
     private destroyed = false;
     private playRequested = false;
     private pendingSeek: number | null = null;
@@ -137,13 +139,13 @@ class LibmpvAudioController extends ControllerBase implements IAudioController {
                 this.onPitchChange?.(0);
             }
         }
-        if (this.sinkId) {
-            await this.runNativeCommand({
-                operation: "output-device",
-                sourceId,
-                deviceId: this.sinkId,
-            });
-        }
+        // Always send it: an empty id means "auto", and skipping the command
+        // would leave libmpv pinned to a previously selected device.
+        await this.runNativeCommand({
+            operation: "output-device",
+            sourceId,
+            deviceId: this.sinkId,
+        }, false);
         // Re-apply exclusive after load so runtime toggles survive track changes.
         if (this.audioExclusive) {
             await this.runNativeCommand({
@@ -173,6 +175,12 @@ class LibmpvAudioController extends ControllerBase implements IAudioController {
         if (!this.sourceAssigned || snapshot.sourceId !== this.sourceId) {
             return;
         }
+        if (snapshot.audioDeviceRemoved || snapshot.audioDeviceAdded) {
+            this.onAudioDevicesChanged?.({
+                removed: !!snapshot.audioDeviceRemoved,
+                added: !!snapshot.audioDeviceAdded,
+            });
+        }
         switch (snapshot.state) {
             case "none":
                 this.playerState = PlayerState.None;
@@ -192,8 +200,12 @@ class LibmpvAudioController extends ControllerBase implements IAudioController {
             case "error":
                 this.playerState = PlayerState.Paused;
                 navigator.mediaSession.playbackState = "paused";
+                // A dead output device is not a broken track: reporting it as a
+                // media error would make the queue skip through every song.
                 this.onError?.(
-                    ErrorReason.EmptyResource,
+                    snapshot.errorKind === "audio-device"
+                        ? ErrorReason.AudioDeviceUnavailable
+                        : ErrorReason.EmptyResource,
                     new Error(snapshot.error ?? "libmpv playback error"),
                 );
                 return;
@@ -218,6 +230,7 @@ class LibmpvAudioController extends ControllerBase implements IAudioController {
         this.sourceLoaded = false;
         this.playRequested = false;
         this.pendingSeek = null;
+        this.trackSource = null;
         this.musicItem = { ...musicItem };
         this.updateMediaSession(musicItem);
         this.playerState = PlayerState.None;
@@ -239,6 +252,7 @@ class LibmpvAudioController extends ControllerBase implements IAudioController {
         this.sourceLoaded = false;
         this.playRequested = false;
         this.pendingSeek = null;
+        this.trackSource = trackSource;
         this.musicItem = { ...musicItem };
         this.updateMediaSession(musicItem);
         void this.stopNativeSource(oldSourceId).catch(() => undefined);
@@ -249,6 +263,31 @@ class LibmpvAudioController extends ControllerBase implements IAudioController {
                 this.playerState = PlayerState.Paused;
             }
         });
+    }
+
+    /**
+     * Re-open the current track, e.g. after libmpv dropped it because the output
+     * device disappeared. Returns false when there is nothing to restore.
+     *
+     * `autoPlay` defaults to whether playback was requested before the reload:
+     * an error already forced `playerState` to Paused, so the caller cannot tell.
+     */
+    reloadTrack(options: { seekTo?: number; autoPlay?: boolean } = {}) {
+        const trackSource = this.trackSource;
+        const musicItem = this.musicItem;
+        if (!trackSource || !musicItem) {
+            return false;
+        }
+        const { seekTo } = options;
+        const autoPlay = options.autoPlay ?? this.playRequested;
+        this.setTrackSource(trackSource, musicItem);
+        if (typeof seekTo === "number" && Number.isFinite(seekTo) && seekTo > 0) {
+            this.seekTo(seekTo);
+        }
+        if (autoPlay) {
+            this.play();
+        }
+        return true;
     }
 
     play() {
@@ -342,11 +381,12 @@ class LibmpvAudioController extends ControllerBase implements IAudioController {
     async setSinkId(deviceId: string) {
         this.sinkId = deviceId;
         if (this.sourceLoaded) {
+            // Not a media failure: never surface device switching as a track error.
             await this.runNativeCommand({
                 operation: "output-device",
                 sourceId: this.sourceId,
                 deviceId,
-            });
+            }, false);
         }
     }
 
@@ -368,6 +408,7 @@ class LibmpvAudioController extends ControllerBase implements IAudioController {
         this.sourceLoaded = false;
         this.playRequested = false;
         this.pendingSeek = null;
+        this.trackSource = null;
         this.musicItem = null;
         navigator.mediaSession.metadata = null;
         navigator.mediaSession.playbackState = "none";
