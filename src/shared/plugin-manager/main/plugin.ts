@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import PluginMethods from "./plugin-methods";
 import {
+    isReservedObjectKey,
     PluginExecutionEnvironment,
     PluginHostDescriptor,
     PluginMethodName,
@@ -63,8 +64,20 @@ export class Plugin {
                 ) => invokeRemote(this.hash, method, args, getEnvironment());
             }
         }
+        // utility host 可能被插件代码攻破，platform / 变量 key 在主进程侧必须复核：
+        // 它们会被用作 pluginMeta 等普通对象的属性名，保留键会污染原型链。
+        if (
+            typeof this.instance.platform !== "string"
+            || isReservedObjectKey(this.instance.platform)
+        ) {
+            this.instance.platform = "";
+        }
         if (Array.isArray(this.instance.userVariables)) {
-            this.instance.userVariables = this.instance.userVariables.filter((item) => item?.key);
+            this.instance.userVariables = this.instance.userVariables.filter((item) =>
+                item?.key
+                && typeof item.key === "string"
+                && !isReservedObjectKey(item.key),
+            );
         }
         this.name = this.instance.platform ?? "";
         this.methods = new PluginMethods(this);

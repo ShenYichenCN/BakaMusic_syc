@@ -416,7 +416,8 @@
         "now_playing": "Now Playing",
         "remove_from_queue": "Remove from queue",
         "user_variable": "User Variable",
-        "user_variable_setting_success": "Setting Successful~"
+        "user_variable_setting_success": "Setting Successful~",
+        "user_variable_setting_fail": "Failed to save settings, please try again"
     },
     "music_sheet_like_view": {
         "play_all": "Play All",

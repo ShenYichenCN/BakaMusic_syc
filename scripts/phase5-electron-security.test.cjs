@@ -86,6 +86,10 @@ function testIpcAndPathBoundaries() {
     assert.match(securitySource, /BrowserWindow\.fromWebContents/);
     assert.match(securitySource, /MAX_NESTING_DEPTH/);
     assert.match(securitySource, /IPC payload contains a cycle/);
+    // Map/Set/Error 的内容藏在内部槽里，payload 估算必须逐类计量
+    assert.match(securitySource, /value instanceof Map/);
+    assert.match(securitySource, /value instanceof Set/);
+    assert.match(securitySource, /value instanceof Error/);
     assert.match(securitySource, /fs\.realpathSync\.native/);
     assert.match(securitySource, /nearest existing ancestor/);
     assert.match(securitySource, /Path is outside the granted roots/);
@@ -216,6 +220,16 @@ function testPluginIsolationAndIntegrity() {
     assert.match(hostSource, /applyNetworkEnvironment/);
     assert.match(hostSource, /new HttpsProxyAgent/);
     assert.match(hostSource, /requestId/);
+
+    // platform / 用户变量 key 会作为普通对象属性名使用，
+    // "__proto__" 等保留键必须在 utility host 和主进程两侧同时拦截
+    assert.match(hostSource, /isReservedObjectKey\(instance\.platform\)/);
+    assert.match(hostSource, /isReservedObjectKey\(item\.key\)/);
+    const pluginSource = read("src/shared/plugin-manager/main/plugin.ts");
+    assert.match(pluginSource, /isReservedObjectKey\(this\.instance\.platform\)/);
+    assert.match(pluginSource, /isReservedObjectKey\(item\.key\)/);
+    const rpcSource = read("src/shared/plugin-manager/rpc.ts");
+    assert.match(rpcSource, /"__proto__", "constructor", "prototype"/);
 
     assert.match(deepLinkSource, /MAX_PLUGIN_URLS = 10/);
     assert.match(deepLinkSource, /pluginUrl\.protocol !== "https:"/);

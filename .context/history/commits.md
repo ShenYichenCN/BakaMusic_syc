@@ -374,3 +374,18 @@ pending
 - **Bug**: A compromised renderer could obtain a persistent recursive grant over an entire drive.
 - **Files**: 0 files
 - **Tests**: test:app-config
+
+## 2026-07-26T23:15:21.819+08:00 — fix(app-config): persist plugin user variables and harden pluginMeta
+
+- **Context-Id**: ba4cce9f-c99c-4e97-aad9-6ffd0ccdaa0f
+- **Decision**: Keep object-typed values in every config patch
+- **Decision**: Fix the mutate-then-write shape at every call site, not only in the patch rule
+- **Decision**: Reject prototype-reserved keys for plugin platform and user-variable keys on both sides
+- **Decision**: Measure Map/Set/Error contents in the IPC payload estimator and validate pluginMeta nesting
+- **Decision**: Ship the persistence fix and the review findings as one commit
+- **Bug**: Plugin user variables were never stored: the app could not see the values and every restart lost the input, while variables saved by older versions still loaded normally.
+- **Bug**: Off-screen lyric and minimode windows were moved back on screen but the corrected position was never persisted.
+- **Bug**: A plugin declaring platform or a user-variable key named "__proto__" could write onto Object.prototype in the main renderer through the immer pluginMeta writers, silently disabling every plugin.
+- **Bug**: A compromised renderer could push multi-megabyte Map/Set payloads past the 512KB app-config cap into main-process memory.
+- **Files**: 14 files
+- **Tests**: npm exec tsc -- --noEmit; npm exec eslint -- ./src; npm test

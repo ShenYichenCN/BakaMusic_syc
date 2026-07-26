@@ -16,6 +16,7 @@ export default function (props: IUserVariablesProps) {
     const { variables = [], initValues = {}, plugin } = props;
 
     const valueRef = useRef<Record<string, string>>({ ...(initValues ?? {}) });
+    const submittingRef = useRef(false);
     const { t } = useTranslation();
 
     return (
@@ -25,17 +26,37 @@ export default function (props: IUserVariablesProps) {
                     <div
                         role="button"
                         className="panel--user-variables-submit"
-                        onClick={() => {
-                            const currentConfig = AppConfig.getConfig("private.pluginMeta") || {};
-                            const currentPluginConfig = currentConfig?.[plugin.platform] ?? {};
-                            currentPluginConfig.userVariables = valueRef.current;
-                            currentConfig[plugin.platform] = currentPluginConfig;
-                            AppConfig.setConfig({
-                                "private.pluginMeta": currentConfig,
-                            });
+                        onClick={async () => {
+                            if (submittingRef.current) {
+                                return;
+                            }
+                            submittingRef.current = true;
+                            // getConfig 返回的是配置内部对象，原地修改会让变更检测
+                            // 判定为"无变化"而丢弃，必须构造新对象提交。
+                            const currentMeta = AppConfig.getConfig("private.pluginMeta") ?? {};
+                            let saved = false;
+                            try {
+                                saved = await AppConfig.setConfig({
+                                    "private.pluginMeta": {
+                                        ...currentMeta,
+                                        [plugin.platform]: {
+                                            ...(currentMeta[plugin.platform] ?? {}),
+                                            userVariables: { ...valueRef.current },
+                                        },
+                                    },
+                                });
+                            } catch {
+                                saved = false;
+                            }
 
-                            hidePanel();
-                            toast.success(t("panel.user_variable_setting_success"));
+                            submittingRef.current = false;
+                            if (saved) {
+                                hidePanel();
+                                toast.success(t("panel.user_variable_setting_success"));
+                            } else {
+                                // 保存失败时保留面板与已输入内容，便于重试
+                                toast.error(t("panel.user_variable_setting_fail"));
+                            }
                         }}
                     >
                         {t("common.confirm")}

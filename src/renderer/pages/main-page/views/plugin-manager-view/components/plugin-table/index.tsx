@@ -444,15 +444,20 @@ export default function PluginTable({ plugins }: IPluginTableProps) {
             ghostRef.current = null;
         }
         const ordered = currentOrderRef.current;
-        AppConfig.setConfig({
-            "private.pluginMeta": produce(AppConfig.getConfig("private.pluginMeta") ?? {}, (draft) => {
-                ordered.forEach((plugin, index) => {
-                    const pluginMeta = draft[plugin.platform] ?? {};
-                    pluginMeta.order = index;
-                    draft[plugin.platform] = pluginMeta;
-                });
-            }),
+        const currentMeta = AppConfig.getConfig("private.pluginMeta") ?? {};
+        const nextMeta = produce(currentMeta, (draft) => {
+            ordered.forEach((plugin, index) => {
+                const pluginMeta = draft[plugin.platform] ?? {};
+                pluginMeta.order = index;
+                draft[plugin.platform] = pluginMeta;
+            });
         });
+        // 顺序未变时 produce 返回原对象，跳过无意义的全量写入
+        if (nextMeta !== currentMeta) {
+            AppConfig.setConfig({
+                "private.pluginMeta": nextMeta,
+            });
+        }
     }
 
     return (

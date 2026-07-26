@@ -416,7 +416,8 @@
         "now_playing": "正在播放",
         "remove_from_queue": "从播放队列移除",
         "user_variable": "用户变量",
-        "user_variable_setting_success": "设置成功~"
+        "user_variable_setting_success": "设置成功~",
+        "user_variable_setting_fail": "设置保存失败，请重试"
     },
     "music_sheet_like_view": {
         "play_all": "播放",

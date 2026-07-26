@@ -6,15 +6,21 @@ const {
     createResetConfigUpdate,
 } = require("../src/shared/app-config/config-utils");
 
+// 对象值可能被调用方原地修改后传回（引用相同但内容已变），
+// 引用相等不能作为"未变化"的证明，必须保留在补丁中。
 const sharedValue = { enabled: true };
 assert.deepEqual(createChangedConfigPatch(
     { alpha: 1, beta: sharedValue },
     { alpha: 1, beta: sharedValue },
-), {});
+), { beta: sharedValue });
 assert.deepEqual(createChangedConfigPatch(
     { alpha: 1, beta: sharedValue },
     { alpha: 2, beta: sharedValue },
-), { alpha: 2 });
+), { alpha: 2, beta: sharedValue });
+assert.deepEqual(createChangedConfigPatch(
+    { alpha: 1, beta: sharedValue },
+    { alpha: 1, gamma: null },
+), { gamma: null });
 
 assert.deepEqual(createResetConfigUpdate(
     { alpha: 1, secret: "stored" },
@@ -81,6 +87,42 @@ const rendererSource = fs.readFileSync(path.join(
 assert.match(rendererSource, /private setupPromise: Promise<void> \| null = null/);
 assert.match(rendererSource, /update\.replace/);
 assert.match(rendererSource, /public async setConfig/);
+
+// 用户变量面板不得原地修改配置对象，保存失败时不得提示成功、不得关闭面板
+const userVariablesPanelSource = fs.readFileSync(path.join(
+    __dirname,
+    "../src/renderer/components/Panel/templates/UserVariables/index.tsx",
+), "utf8");
+assert.doesNotMatch(userVariablesPanelSource, /currentPluginConfig\.userVariables\s*=/);
+assert.match(userVariablesPanelSource, /userVariables: \{ \.\.\.valueRef\.current \}/);
+assert.match(userVariablesPanelSource, /user_variable_setting_fail/);
+assert.match(userVariablesPanelSource, /catch/);
+assert.match(userVariablesPanelSource, /submittingRef/);
+assert.match(
+    userVariablesPanelSource,
+    /if \(saved\) \{\s*hidePanel\(\);/,
+);
+
+// pluginMeta 的嵌套结构必须在 IPC 边界校验
+assert.match(mainSource, /contains too many platform entries/);
+assert.match(mainSource, /contains an invalid user variable/);
+assert.match(mainSource, /contains an invalid order/);
+assert.match(mainSource, /contains an invalid disabled flag/);
+
+// 窗口位置修正必须在副本上进行，不得原地改写 getConfig 返回的对象
+const windowManagerSource = fs.readFileSync(path.join(
+    __dirname,
+    "../src/main/window-manager/index.ts",
+), "utf8");
+assert.match(windowManagerSource, /const normalized = \{ x: position\.x, y: position\.y \}/);
+assert.match(windowManagerSource, /onNormalized\(normalized\)/);
+
+// 拖拽排序未变化时（immer 返回原引用）不得触发全量写入
+const pluginTableSource = fs.readFileSync(path.join(
+    __dirname,
+    "../src/renderer/pages/main-page/views/plugin-manager-view/components/plugin-table/index.tsx",
+), "utf8");
+assert.match(pluginTableSource, /nextMeta !== currentMeta/);
 
 const localMusicSource = fs.readFileSync(path.join(
     __dirname,

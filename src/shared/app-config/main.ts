@@ -315,9 +315,48 @@ function validateRendererConfigValue(key: keyof IAppConfig, value: unknown) {
         key === "playMusic.audioOutputDevice"
         || key === "lyric.fontData"
         || key === "shortCut.shortcuts"
-        || key === "private.pluginMeta"
     ) {
         assertPlainObject(value, key);
+        return;
+    }
+    if (key === "private.pluginMeta") {
+        assertPlainObject(value, key);
+        const metaEntries = Object.entries(value);
+        if (metaEntries.length > 256) {
+            throw new Error(`${key} contains too many platform entries`);
+        }
+        for (const [platform, meta] of metaEntries) {
+            if (platform.length > 128) {
+                throw new Error(`${key} contains an invalid platform key`);
+            }
+            if (meta == null) {
+                continue;
+            }
+            assertPlainObject(meta, `${key}.${platform}`);
+            const { order, disabled, userVariables } = meta as Record<string, unknown>;
+            if (order != null && (typeof order !== "number" || !Number.isFinite(order))) {
+                throw new Error(`${key} contains an invalid order`);
+            }
+            if (disabled != null && typeof disabled !== "boolean") {
+                throw new Error(`${key} contains an invalid disabled flag`);
+            }
+            if (userVariables != null) {
+                assertPlainObject(userVariables, `${key}.${platform}.userVariables`);
+                const variableEntries = Object.entries(userVariables);
+                if (variableEntries.length > 256) {
+                    throw new Error(`${key} contains too many user variables`);
+                }
+                for (const [variableKey, variableValue] of variableEntries) {
+                    if (
+                        variableKey.length > 256
+                        || typeof variableValue !== "string"
+                        || variableValue.length > 32_768
+                    ) {
+                        throw new Error(`${key} contains an invalid user variable`);
+                    }
+                }
+            }
+        }
         return;
     }
     if (typeof value !== "string" || value.length > 32_768) {

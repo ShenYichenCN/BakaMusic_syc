@@ -19,6 +19,16 @@ export const pluginMethodNames = [
 
 export type PluginMethodName = (typeof pluginMethodNames)[number];
 
+/**
+ * platform 和用户变量 key 会被用作普通对象的属性名；
+ * 原型链保留键会污染 Object.prototype 或命中继承访问器，必须拒绝。
+ */
+const reservedObjectKeys = new Set(["__proto__", "constructor", "prototype"]);
+
+export function isReservedObjectKey(key: string) {
+    return reservedObjectKeys.has(key);
+}
+
 export interface PluginExecutionEnvironment {
     os: NodeJS.Platform;
     appVersion: string;

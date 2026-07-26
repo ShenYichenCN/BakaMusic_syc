@@ -11,6 +11,7 @@ import * as webdav from "webdav";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import pakoForPlugins from "./pako-compat";
 import {
+    isReservedObjectKey,
     PluginExecutionEnvironment,
     PluginHostCallbackRequest,
     PluginHostCallbackResponse,
@@ -334,12 +335,20 @@ function executePlugin(
     if (!instance || typeof instance !== "object") {
         throw new Error("Plugin did not export an object");
     }
-    if (typeof instance.platform !== "string" || !instance.platform.trim() || instance.platform.length > 128) {
+    if (
+        typeof instance.platform !== "string"
+        || !instance.platform.trim()
+        || instance.platform.length > 128
+        || isReservedObjectKey(instance.platform)
+    ) {
         throw new Error("Plugin platform is not valid");
     }
     if (Array.isArray(instance.userVariables)) {
         instance.userVariables = instance.userVariables.filter((item) =>
-            item?.key && typeof item.key === "string" && item.key.length <= 256,
+            item?.key
+            && typeof item.key === "string"
+            && item.key.length <= 256
+            && !isReservedObjectKey(item.key),
         ).slice(0, 128);
     }
     return { instance, environment: state };

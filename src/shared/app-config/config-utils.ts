@@ -15,8 +15,14 @@ export function createChangedConfigPatch(
     const changedPatch: Record<string, unknown> = {};
 
     for (const key of Object.keys(incoming)) {
-        if (!Object.is(current?.[key], incoming[key])) {
-            changedPatch[key] = incoming[key];
+        const incomingValue = incoming[key];
+        // 对象值可能被调用方原地修改后传回：引用相等无法证明内容未变，
+        // 一律保留在补丁中，由接收方按自身副本再判定。
+        if (
+            (typeof incomingValue === "object" && incomingValue !== null)
+            || !Object.is(current?.[key], incomingValue)
+        ) {
+            changedPatch[key] = incomingValue;
         }
     }
     return changedPatch as IAppConfig;

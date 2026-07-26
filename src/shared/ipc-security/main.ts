@@ -137,6 +137,19 @@ function estimatePayloadBytes(value: unknown, depth = 0, seen = new WeakSet<obje
     if (value instanceof ArrayBuffer) {
         return value.byteLength;
     }
+    // 结构化克隆可传输的内容藏在内部槽里，Object.entries 会计成 0 字节，
+    // 必须逐类计量，否则超大 Map/Set/Error 能绕过 payload 上限。
+    if (value instanceof Date) {
+        return 8;
+    }
+    if (value instanceof RegExp) {
+        return Buffer.byteLength(value.source, "utf8");
+    }
+    if (value instanceof Error) {
+        return Buffer.byteLength(value.name, "utf8")
+            + Buffer.byteLength(value.message, "utf8")
+            + Buffer.byteLength(value.stack ?? "", "utf8");
+    }
     if (typeof value === "object") {
         if (seen.has(value)) {
             throw new Error("IPC payload contains a cycle");
@@ -144,6 +157,15 @@ function estimatePayloadBytes(value: unknown, depth = 0, seen = new WeakSet<obje
         seen.add(value);
         let total = 0;
         if (Array.isArray(value)) {
+            for (const item of value) {
+                total += estimatePayloadBytes(item, depth + 1, seen);
+            }
+        } else if (value instanceof Map) {
+            for (const [key, item] of value) {
+                total += estimatePayloadBytes(key, depth + 1, seen);
+                total += estimatePayloadBytes(item, depth + 1, seen);
+            }
+        } else if (value instanceof Set) {
             for (const item of value) {
                 total += estimatePayloadBytes(item, depth + 1, seen);
             }

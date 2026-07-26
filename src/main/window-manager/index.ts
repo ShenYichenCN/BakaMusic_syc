@@ -918,6 +918,9 @@ class WindowManager implements IWindowManager {
         const currentDisplayBounds =
             screen.getDisplayNearestPoint(position).bounds;
         const windowBounds = window.getBounds();
+        // position 可能直接来自 getConfig 的内部对象，
+        // 必须在副本上修正，原地写回会让配置变更检测失真。
+        const normalized = { x: position.x, y: position.y };
         // 如果窗口完全在屏幕外，重置位置
         const [left, top, right, bottom] = [
             position.x,
@@ -927,24 +930,24 @@ class WindowManager implements IWindowManager {
         ];
         let needMakeup = false;
         if (left > currentDisplayBounds.x + currentDisplayBounds.width) {
-            position.x =
+            normalized.x =
                 currentDisplayBounds.x + currentDisplayBounds.width - windowBounds.width;
             needMakeup = true;
         } else if (right < currentDisplayBounds.x) {
-            position.x = currentDisplayBounds.x;
+            normalized.x = currentDisplayBounds.x;
             needMakeup = true;
         }
         if (top > currentDisplayBounds.y + currentDisplayBounds.height) {
-            position.y =
+            normalized.y =
                 currentDisplayBounds.y + currentDisplayBounds.height - windowBounds.height;
             needMakeup = true;
         } else if (bottom < currentDisplayBounds.y) {
-            position.y = currentDisplayBounds.y;
+            normalized.y = currentDisplayBounds.y;
             needMakeup = true;
         }
-        window.setPosition(position.x, position.y, false);
+        window.setPosition(normalized.x, normalized.y, false);
         if (needMakeup) {
-            onNormalized(position);
+            onNormalized(normalized);
         }
     }
 }
