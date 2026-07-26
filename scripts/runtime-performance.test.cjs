@@ -177,7 +177,46 @@ assert.match(nodeRuntimeMainSource, /@shared\/node-runtime\/overwrite-embedded-l
 assert.match(nodeRuntimeMainSource, /extensions: supportLocalMediaType/);
 assert.match(embeddedLyricWriterSource, /bakamusic-lyric-/);
 assert.match(embeddedLyricWriterSource, /Embedded lyric verification failed/);
-assert.match(embeddedLyricWriterSource, /songFile\.dispose\(\)/);
-assert.match(embeddedLyricWriterSource, /removeFrames\(Id3v2FrameIdentifiers\.SYLT\)/);
+// 歌词写入已从 node-taglib-sharp 迁移到 native TagLib：句柄生命周期与
+// 残留 SYLT 清理都在 addon 内完成，JS 侧只保证走 facade 并读回校验。
+assert.match(embeddedLyricWriterSource, /from "@\/common\/taglib-native"/);
+assert.match(embeddedLyricWriterSource, /writeTags\(filePath, \{\s*lyrics: lyricContent,/);
+assert.match(embeddedLyricWriterSource, /readTags\(filePath, \{[^}]*skipCovers: true,/);
+
+// 歌词面板在详情页关闭后仍然挂载（AnimatedDiv keepMounted）：不能直接订阅
+// 每 200ms 变化的进度和逐字歌词对象，否则整棵子树全程每秒重渲染 5-10 次。
+assert.match(lyricContextMenuSource, /useIsLyricLoading/);
+assert.match(lyricContextMenuSource, /useLyricParser/);
+assert.match(lyricContextMenuSource, /useProgressMsWhenActive\(active\)/);
+assert.doesNotMatch(lyricContextMenuSource, /useProgress\(\)|useLyric\(\)/);
+const trackPlayerHooksSource = fs.readFileSync(path.join(
+    __dirname,
+    "../src/renderer/core/track-player/hooks.ts",
+), "utf8");
+assert.match(trackPlayerHooksSource, /currentLyricStore\.useSelector/);
+assert.match(trackPlayerHooksSource, /active \? Math\.round\(\(progress\.currentTime \?\? 0\) \* 1000\) : 0/);
+
+// MusicList 的 memo 比较器：两边都没有 musicSheet 也要算相等，
+// 否则本地音乐/下载/搜索等不传歌单的调用方永远无法命中 memo。
+assert.match(
+    musicListSource,
+    /if \(Boolean\(prev\.musicSheet\) !== Boolean\(curr\.musicSheet\)\) \{/,
+);
+assert.match(musicListSource, /memoComparedKeys\.every\(\(key\) => prev\[key\] === curr\[key\]\)/);
+// 排序键预计算 + 多选集合提到行渲染之外。
+assert.match(musicListSource, /key: getSortValue\(item, sortField\),/);
+assert.match(musicListSource, /const multiSelectedItems = useMemo\(/);
+assert.match(musicListSource, /const selectedItems = isActive \? multiSelectedItems : null;/);
+// 调用方必须用稳定引用，否则上面的 memo 依然不会生效。
+for (const relativePath of [
+    "../src/renderer/pages/main-page/views/local-music-view/views/list/index.tsx",
+    "../src/renderer/pages/main-page/views/local-music-view/views/album/index.tsx",
+    "../src/renderer/pages/main-page/views/local-music-view/views/artist/index.tsx",
+    "../src/renderer/pages/main-page/views/local-music-view/views/folder/index.tsx",
+]) {
+    const viewSource = fs.readFileSync(path.join(__dirname, relativePath), "utf8");
+    assert.match(viewSource, /virtualProps=\{virtualProps\}/, relativePath);
+    assert.doesNotMatch(viewSource, /musicList=\{[^}]*\?\? \[\]\}/, relativePath);
+}
 
 console.log("runtime-performance: all assertions passed");

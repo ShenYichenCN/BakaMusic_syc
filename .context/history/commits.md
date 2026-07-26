@@ -356,3 +356,12 @@ pending
 - **Bug**: 'Daft Punk' became 'Da'+'Punk' and '迈克尔·杰克逊' split into two artists.
 - **Files**: 0 files
 - **Tests**: test:music-quality-metadata
+
+## 2026-07-26T22:15:58.151+08:00 — perf(renderer): cut redundant list, lyric, and search work
+
+- **Context-Id**: 137d3ace-7f2b-4818-bba5-155dd88f0e54
+- **Decision**: Repair the MusicList memo comparator and stabilize call-site props
+- **Decision**: Gate hidden lyric subscriptions and cache search normalization
+- **Bug**: Closed detail page reconciled the lyric subtree ~5-10x/sec; keystrokes re-normalized the whole local library.
+- **Files**: 0 files
+- **Tests**: test:runtime-performance; test:search-matching

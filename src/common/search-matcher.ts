@@ -34,6 +34,56 @@ function compactSearchValue(value: string) {
     return value.replace(compactSeparatorsPattern, "");
 }
 
+/**
+ * 逐键过滤时被搜的字段本身不会变，只有 query 在变。归一化一次要跑
+ * NFKC + OpenCC 繁简 + NFKD + 若干正则，10k 首 × 5 个字段 = 每次按键
+ * 五万次重复计算，所以按原始字符串缓存结果。超过上限直接清空（比维护
+ * LRU 更便宜，命中率损失只在切换超大库时出现）。
+ */
+const MAX_CACHED_VALUES = 100_000;
+const normalizedValueCache = new Map<string, string>();
+const compactValueCache = new Map<string, string>();
+
+function cachedNormalizeValue(
+    value: SearchableValue,
+    options: ISearchMatchOptions,
+) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+    const raw = String(value);
+    if (!raw) {
+        return "";
+    }
+    const cacheKey = `${options.caseSensitive ? 1 : 0} ${raw}`;
+    const cached = normalizedValueCache.get(cacheKey);
+    if (cached !== undefined) {
+        return cached;
+    }
+    const normalized = normalizeSearchValue(raw, options);
+    if (normalizedValueCache.size >= MAX_CACHED_VALUES) {
+        normalizedValueCache.clear();
+    }
+    normalizedValueCache.set(cacheKey, normalized);
+    return normalized;
+}
+
+function cachedCompactValue(value: string) {
+    if (!value) {
+        return "";
+    }
+    const cached = compactValueCache.get(value);
+    if (cached !== undefined) {
+        return cached;
+    }
+    const compact = compactSearchValue(value);
+    if (compactValueCache.size >= MAX_CACHED_VALUES) {
+        compactValueCache.clear();
+    }
+    compactValueCache.set(value, compact);
+    return compact;
+}
+
 export function createSearchMatcher(
     query: string,
     options: ISearchMatchOptions = {},
@@ -48,14 +98,14 @@ export function createSearchMatcher(
         }
 
         const normalizedValues = values
-            .map((value) => normalizeSearchValue(value, options))
+            .map((value) => cachedNormalizeValue(value, options))
             .filter(Boolean);
         const searchableText = normalizedValues.join("\n");
         if (searchableText.includes(normalizedQuery)) {
             return true;
         }
 
-        const compactValues = normalizedValues.map(compactSearchValue);
+        const compactValues = normalizedValues.map(cachedCompactValue);
         if (
             compactQuery.length >= 2
             && compactValues.some((value) => value.includes(compactQuery))

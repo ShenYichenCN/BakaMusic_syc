@@ -8,6 +8,10 @@ interface IProps {
     localMusicList: IMusic.IMusicItem[];
 }
 
+// 稳定引用，避免每次重渲染都让 MusicList 的 memo 失效。
+const hideRows: Array<"artist"> = ["artist"];
+const emptyMusicList: IMusic.IMusicItem[] = [];
+
 export default function ArtistView(props: IProps) {
     const { localMusicList } = props;
 
@@ -18,6 +22,12 @@ export default function ArtistView(props: IProps) {
 
     const [selectedKey, setSelectedKey] = useState<string>();
     const rightPartRef = useRef<HTMLDivElement>(null);
+    const virtualProps = useMemo(() => ({
+        getScrollElement() {
+            return rightPartRef.current;
+        },
+        fallbackRenderCount: 40,
+    }), []);
 
     const actualSelectedKey = selectedKey ?? keys?.[0];
 
@@ -55,14 +65,9 @@ export default function ArtistView(props: IProps) {
             <div className="right-part" ref={rightPartRef}>
                 <MusicList
                     sortStorageKey="local-music"
-                    musicList={allMusic[actualSelectedKey] ?? []}
-                    hideRows={["artist"]}
-                    virtualProps={{
-                        getScrollElement() {
-                            return rightPartRef.current;
-                        },
-                        fallbackRenderCount: 40,
-                    }}
+                    musicList={allMusic[actualSelectedKey] ?? emptyMusicList}
+                    hideRows={hideRows}
+                    virtualProps={virtualProps}
                 ></MusicList>
             </div>
         </div>

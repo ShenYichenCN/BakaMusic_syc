@@ -11,9 +11,10 @@ import { getLinkedLyric, unlinkLyric } from "@/renderer/core/link-lyric";
 import trackPlayer from "@renderer/core/track-player";
 import {
     useCurrentMusic,
-    useLyric,
+    useIsLyricLoading,
+    useLyricParser,
     usePlayerState,
-    useProgress,
+    useProgressMsWhenActive,
     useSpeed,
 } from "@renderer/core/track-player/hooks";
 import LyricParser from "@/renderer/utils/lyric-parser";
@@ -58,9 +59,11 @@ interface ILyricProps {
 
 export default function Lyric({ active, playerReady }: ILyricProps) {
     const currentMusic = useCurrentMusic();
-    const lyricContext = useLyric();
-    const lyricParser = lyricContext?.parser;
-    const progress = useProgress();
+    // 只订阅 parser 与加载态：逐字歌词会每个 tick 换一次 currentLyricStore 的
+    // 对象，而本面板在详情页关闭后依然挂载（keepMounted）。
+    const isLyricLoading = useIsLyricLoading();
+    const lyricParser = useLyricParser() ?? undefined;
+    const currentTimeMs = useProgressMsWhenActive(active);
     const playerState = usePlayerState();
     const speed = useSpeed();
     const [fontSize, setFontSize] = useState<string | null>(
@@ -81,15 +84,14 @@ export default function Lyric({ active, playerReady }: ILyricProps) {
         });
     }, [lyricParser, showRomanization, showTranslation]);
 
-    // Music detail unmounts while closed. When reopened after startup restore,
-    // re-request only while the store is still in the initial "loading" state.
-    // `{}` means "loaded, no lyric" — do not loop-fetch in that case.
+    // 面板保持挂载，但启动恢复后可能仍处于初始 "loading" 态：仅在此状态补拉一次。
+    // `{}` 表示"已加载但没有歌词"，那种情况不能循环拉取。
     useEffect(() => {
-        if (!currentMusic || lyricContext !== null) {
+        if (!currentMusic || !isLyricLoading) {
             return;
         }
         void trackPlayer.fetchCurrentLyric(true);
-    }, [currentMusic, lyricContext]);
+    }, [currentMusic, isLyricLoading]);
 
     const displayFontSize = fontSize ? Math.max(24, +fontSize * 2.15) : undefined;
 
@@ -166,7 +168,7 @@ export default function Lyric({ active, playerReady }: ILyricProps) {
                     openContextMenu(event.clientX, event.clientY);
                 }}
             >
-                {lyricContext === null ? (
+                {isLyricLoading ? (
                     <div className="music-detail-lyric-loading">
                         <Loading></Loading>
                     </div>
@@ -174,7 +176,7 @@ export default function Lyric({ active, playerReady }: ILyricProps) {
                     <AppleMusicLyricPlayer
                         active={active}
                         lyricLines={lyricLines}
-                        currentTimeMs={(progress?.currentTime ?? 0) * 1000}
+                        currentTimeMs={currentTimeMs}
                         playing={playerState === PlayerState.Playing}
                         speed={speed}
                         fontSize={displayFontSize || "clamp(28px, 2.8vw, 48px)"}

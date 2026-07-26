@@ -36,4 +36,14 @@ for (const file of synchronizedSearchFiles) {
 }
 assert.match(read(synchronizedSearchFiles[0]), /item\.\$\$localPath/);
 
+// 被搜字段在两次按键之间不会变：归一化结果必须缓存，否则每次按键都要重跑
+// 一遍 NFKC + OpenCC + NFKD（1 万首 × 5 字段 = 五万次重复计算）。
+// 大小写敏感与否是不同的缓存键，缓存不得让两种模式互相污染。
+assert.match(read("src/common/search-matcher.ts"), /const normalizedValueCache = new Map/);
+assert.equal(matchesSearchValues(["ABC"], "abc"), true);
+assert.equal(matchesSearchValues(["ABC"], "abc", { caseSensitive: true }), false);
+assert.equal(matchesSearchValues(["ABC"], "ABC", { caseSensitive: true }), true);
+assert.equal(matchesSearchValues(["周杰倫"], "周杰伦"), true);
+assert.equal(matchesSearchValues(["周杰倫"], "周杰伦", { caseSensitive: true }), true);
+
 console.log("search-matching: all assertions passed");

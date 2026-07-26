@@ -780,10 +780,17 @@ function MusicListComponent(props: IMusicListProps) {
         if (sortField === "custom") {
             return musicList;
         }
-        return musicList.map((item, i) => ({ item, i }))
+        // 排序键预先算好（decorate-sort-undecorate）：getSortValue 并不便宜
+        // （getInternalData、qualityKeys 复制+反转、toLocaleLowerCase），
+        // 在比较器里现算会变成 ~2n·log n 次调用而不是 n 次。
+        return musicList.map((item, i) => ({
+            item,
+            i,
+            key: getSortValue(item, sortField),
+        }))
             .sort((a, b) => {
-                const av = getSortValue(a.item, sortField);
-                const bv = getSortValue(b.item, sortField);
+                const av = a.key;
+                const bv = b.key;
                 let cmp: number;
                 if (typeof av === "string") {
                     cmp = av.localeCompare(bv as string);
@@ -1003,13 +1010,15 @@ function MusicListComponent(props: IMusicListProps) {
         [onDragEnd, musicList],
     );
 
+    // 依赖 rows 本身而不是 table：排序/数据变化后 getRowModel() 会返回新数组，
+    // 这样下面的 memo 能跟着失效，不会拿旧行号映射出旧曲目。
+    const rowModelRows = table.getRowModel().rows;
     const getSelectedItems = useCallback((selected: Set<number>) => {
-        const rows = table.getRowModel().rows;
         return Array.from(selected)
             .sort((a, b) => a - b)
-            .map((index) => rows[index]?.original)
+            .map((index) => rowModelRows[index]?.original)
             .filter((item): item is IMusic.IMusicItem => !!item);
-    }, [table]);
+    }, [rowModelRows]);
 
     const playMusicItem = useCallback((musicItem: IMusic.IMusicItem) => {
         playMusicFromList(
@@ -1018,6 +1027,13 @@ function MusicListComponent(props: IMusicListProps) {
             doubleClickBehavior,
         );
     }, [doubleClickBehavior, table]);
+
+    // 多选集合与具体行无关：放在行渲染里会让每个可见的选中行都重跑一次
+    // O(k log k)（全选 + 滚动时 = 每帧十几次全量排序），整屏共用一次即可。
+    const multiSelectedItems = useMemo(
+        () => (activeItems.size > 1 ? getSelectedItems(activeItems) : null),
+        [activeItems, getSelectedItems],
+    );
 
     const defaultSort = getDefaultSort();
     const currentSortIsDefault = sortField === defaultSort.field && sortDirection === defaultSort.direction;
@@ -1120,10 +1136,7 @@ function MusicListComponent(props: IMusicListProps) {
                             const isActive = activeItems.has(virtualItem.rowIndex);
                             const isPlaying = !!currentMusic && isSameMedia(currentMusic, musicItem);
                             const artworkSrc = getCompactArtworkSrc(musicItem, 160) ?? albumImg;
-                            const selectedItems =
-                                activeItems.size > 1 && isActive
-                                    ? getSelectedItems(activeItems)
-                                    : null;
+                            const selectedItems = isActive ? multiSelectedItems : null;
 
                             return (
                                 <div
@@ -1375,19 +1388,44 @@ function MusicListComponent(props: IMusicListProps) {
     );
 }
 
+/**
+ * musicSheet 之外的全部 props 都按引用比较：漏比某个 prop 会静默丢弃更新，
+ * 所以调用方需要把内联字面量（containerStyle / virtualProps / 回调）提升为
+ * 稳定引用，否则 memo 不会生效。
+ */
+const memoComparedKeys: Array<keyof IMusicListProps> = [
+    "musicList",
+    "getAllMusicItems",
+    "state",
+    "doubleClickBehavior",
+    "onPageChange",
+    "virtualProps",
+    "headerOnlySurface",
+    "containerStyle",
+    "hideRows",
+    "enableDrag",
+    "onDragEnd",
+    "contextMenu",
+    "sortStorageKey",
+    "useSearchDefaultSort",
+];
+
 export default memo(
     MusicListComponent,
-    (prev, curr) =>
-        !!(
-            prev.state === curr.state &&
-            prev.enableDrag === curr.enableDrag &&
-            prev.musicList === curr.musicList &&
-            prev.onPageChange === curr.onPageChange &&
-            prev.onDragEnd === curr.onDragEnd &&
-            prev.sortStorageKey === curr.sortStorageKey &&
-            prev.useSearchDefaultSort === curr.useSearchDefaultSort &&
-            prev.musicSheet &&
-            curr.musicSheet &&
-            isSameMedia(prev.musicSheet, curr.musicSheet)
-        ),
+    (prev, curr) => {
+        // 歌单用媒体身份比较。此前写作 `prev.musicSheet && curr.musicSheet && ...`
+        // 放在 && 链尾，导致不传 musicSheet 的调用方（本地音乐、下载、搜索、歌手页）
+        // 一律返回 false，memo 形同废弃。
+        if (Boolean(prev.musicSheet) !== Boolean(curr.musicSheet)) {
+            return false;
+        }
+        if (
+            prev.musicSheet
+            && curr.musicSheet
+            && !isSameMedia(prev.musicSheet, curr.musicSheet)
+        ) {
+            return false;
+        }
+        return memoComparedKeys.every((key) => prev[key] === curr[key]);
+    },
 );
