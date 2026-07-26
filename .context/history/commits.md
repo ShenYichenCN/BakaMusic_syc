@@ -320,3 +320,12 @@ pending
 - **Bug**: Tray commands crashed and all lyric/minimode IPC was denied after the main window closed with the app alive.
 - **Files**: 0 files
 - **Tests**: test:service-manager; package && npm run smoke:package
+
+## 2026-07-26T22:14:42.109+08:00 — fix(download): scope worker recovery and lift watcher-scan timeout
+
+- **Context-Id**: 3aa1664b-38eb-4f8c-bd95-6f4fb73cb021
+- **Decision**: Recover the worker only on runtime transport failures
+- **Decision**: Give watcher-scan its own long timeout
+- **Bug**: Batch-downloading an album with one unavailable track thrashed all downloads and retried the bad track endlessly.
+- **Files**: 0 files
+- **Tests**: test:phase3-network; test:phase5-security

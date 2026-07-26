@@ -31,6 +31,12 @@ const RUNTIME_TIMEOUT_MS = 60_000;
  * flac/m4a transfers and leaves the UI stuck after a dead runtime.
  */
 const DOWNLOAD_FILE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+/**
+ * 全库扫描要遍历目录树并解析每个新文件的元信息，几千首在 HDD/NAS 上远超 60s。
+ * 超时会 kill 掉这个被下载共用的 utility，把所有在途下载一起打断，
+ * 而且重试必然再次撞到同一道墙 —— 所以给扫描单独放宽。
+ */
+const WATCHER_SCAN_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_PENDING_REQUESTS = 256;
 const MAX_RPC_BYTES = 128 * 1024 * 1024;
 const MAX_RUNTIME_WORKING_SET_KB = 512 * 1024;
@@ -295,7 +301,7 @@ class NodeRuntimeManager {
         ipcMain.handle("@shared/node-runtime/watcher-scan", async (event, initPaths, knownPaths) => {
             assertIpcSender(event, ["main"]);
             const state = this.validateWatcherState(initPaths, knownPaths);
-            return this.request("watcher-scan", state);
+            return this.request("watcher-scan", state, WATCHER_SCAN_TIMEOUT_MS);
         });
     }
 

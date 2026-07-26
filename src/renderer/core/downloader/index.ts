@@ -56,6 +56,8 @@ interface IDownloadTaskControl {
     musicItem: IMusic.IMusicItem;
     preferredQuality?: IMusic.IQualityKey;
     runId: number;
+    /** 运行时崩溃后自动重排的次数，用于封顶避免无限重试。 */
+    recoveryCount: number;
     release?: () => void;
 }
 
@@ -83,6 +85,7 @@ const downloadingProgress = new Map<string, IDownloadStatus>();
 const taskControls = new Map<string, IDownloadTaskControl>();
 const downloadingQueue = new PQueue({ concurrency: 5 });
 const concurrencyLimit = 20;
+const maxAutoRecoveryPerTask = 3;
 let downloaderWorker: IDownloaderWorker | undefined;
 let downloaderWorkerRecovering = false;
 let lastDownloadCompletedAt = 0;
@@ -129,6 +132,7 @@ function recoverDownloaderWorker(reason: unknown) {
     const interruptedTasks = downloadingTaskStore.getValue().filter(
         ({ status }) => status.state === DownloadState.DOWNLOADING,
     );
+    const resumableTasks: IDownloadTaskControl[] = [];
     interruptedTasks.forEach(({ musicItem }) => {
         const taskControl = taskControls.get(getMediaPrimaryKey(musicItem));
         if (!taskControl) {
@@ -136,20 +140,25 @@ function recoverDownloaderWorker(reason: unknown) {
         }
         taskControl.runId++;
         taskControl.release?.();
+        // 运行时反复崩溃时不再无限重排，否则任务会永远停在 WAITING/DOWNLOADING。
+        if (taskControl.recoveryCount >= maxAutoRecoveryPerTask) {
+            updateTaskStatus(musicItem, {
+                state: DownloadState.ERROR,
+                msg: "下载运行时多次异常，请稍后重试",
+            });
+            return;
+        }
+        taskControl.recoveryCount++;
+        resumableTasks.push(taskControl);
         updateTaskStatus(musicItem, { state: DownloadState.WAITING });
     });
 
     try {
         setupDownloaderWorker();
-        interruptedTasks.forEach(({ musicItem }) => {
-            const taskControl = taskControls.get(getMediaPrimaryKey(musicItem));
-            if (taskControl) {
-                queueTask(taskControl);
-            }
-        });
+        resumableTasks.forEach((taskControl) => queueTask(taskControl));
     } catch (error) {
-        interruptedTasks.forEach(({ musicItem }) => {
-            updateTaskStatus(musicItem, {
+        resumableTasks.forEach((taskControl) => {
+            updateTaskStatus(taskControl.musicItem, {
                 state: DownloadState.ERROR,
                 msg: toError(error).message,
             });
@@ -157,6 +166,17 @@ function recoverDownloaderWorker(reason: unknown) {
     } finally {
         downloaderWorkerRecovering = false;
     }
+}
+
+/**
+ * 只有 node runtime 自身不可用（进程退出、超时被 kill、拒绝启动）才需要重排
+ * 全部在途任务。单曲失败——无可用音源、插件报错、媒体源校验被拒——必须原地
+ * 报 ERROR：否则一首无源的歌会连带重启其他正在下载的任务，而且它自己的
+ * runId 会先被 bump，导致 ERROR 永远不上报并无限重排。
+ */
+function isRuntimeTransportFailure(error: Error) {
+    return /^Node runtime\b/.test(error.message)
+        || error.message === "Downloader worker is unavailable";
 }
 
 function setDownloadingConcurrency(concurrency: number) {
@@ -308,7 +328,7 @@ async function startDownload(
     downloadingMusicStore.setValue((previous) => [...previous, ...validMusicItems]);
     validMusicItems.forEach((musicItem) => {
         const taskId = getMediaPrimaryKey(musicItem);
-        const taskControl = { musicItem, preferredQuality, runId: 0 };
+        const taskControl = { musicItem, preferredQuality, runId: 0, recoveryCount: 0 };
         taskControls.set(taskId, taskControl);
         queueTask(taskControl);
     });
@@ -347,6 +367,8 @@ function resumeTask(musicItem: IMusic.IMusicItem) {
     ) {
         return;
     }
+    // 用户手动重试重新给足自动恢复额度。
+    taskControl.recoveryCount = 0;
     queueTask(taskControl);
 }
 
@@ -530,7 +552,7 @@ async function downloadMusicImpl(
             },
         );
     } catch (error) {
-        if (worker === downloaderWorker) {
+        if (worker === downloaderWorker && isRuntimeTransportFailure(toError(error))) {
             recoverDownloaderWorker(toError(error));
         }
         if (!isCancelled()) {

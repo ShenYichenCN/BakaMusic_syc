@@ -273,15 +273,30 @@ async function run() {
     const workerSource = readSource("src/webworkers/downloader.ts");
     assert.match(workerSource, /createDownloadPartPath\(filePath, taskId\)/);
     assert.match(workerSource, /createWriteStream\(partPath/);
-    assert.match(workerSource, /fsPromises\.rename\(partPath, filePath\)/);
-    assert.match(workerSource, /coverDownloadSemaphore = new Semaphore\(3\)/);
-    assert.match(workerSource, /coverDownloadTimeoutMs = 15_000/);
-    assert.doesNotMatch(workerSource, /MAX_COVER|cover.*size.*limit/i);
+    // 完整性校验通过后才原子 rename；最终容器扩展名由 magic bytes 兜底修正。
+    assert.match(workerSource, /validateCompletedDownload\(responsePlan, receivedBytes, completedStat\.size\)/);
+    assert.match(workerSource, /resolveDownloadedFilePath\(\s*filePath,/);
+    assert.match(workerSource, /fsPromises\.rename\(partPath, finalPath\)/);
+    // 封面改由 main 进程 net.fetch 拉取后以 base64 交给 utility 嵌入，
+    // utility 后处理不再自行触网；跨 IPC 传输因此必须有显式体积与类型上限。
+    assert.match(workerSource, /payload\.coverImage\?\.dataBase64/);
+    const coverFetchSource = readSource("src/shared/node-runtime/main.ts");
+    assert.match(coverFetchSource, /const MAX_COVER_BYTES = 8 \* 1024 \* 1024/);
+    assert.match(coverFetchSource, /async function fetchCoverImageInMain/);
+    assert.match(coverFetchSource, /buffer\.length > MAX_COVER_BYTES/);
+    assert.match(coverFetchSource, /mimeType\.startsWith\("image\/"\)/);
 
     const downloaderSource = readSource("src/renderer/core/downloader/index.ts");
     assert.match(downloaderSource, /@shared\/node-runtime\/renderer/);
     assert.match(downloaderSource, /recoverDownloaderWorker/);
-    assert.match(downloaderSource, /recoverDownloaderWorker\(toError\(error\)\)/);
+    // 只有运行时自身不可用才重排全部任务：单曲失败（无音源/插件报错/媒体源被拒）
+    // 必须原地报错，否则会连带重启其他在途下载，失败任务自己还会无限重排。
+    assert.match(downloaderSource, /function isRuntimeTransportFailure/);
+    assert.match(
+        downloaderSource,
+        /worker === downloaderWorker && isRuntimeTransportFailure\(toError\(error\)\)/,
+    );
+    assert.match(downloaderSource, /taskControl\.recoveryCount >= maxAutoRecoveryPerTask/);
     assert.match(downloaderSource, /queueTask\(taskControl\)/);
     assert.match(
         downloaderSource,
@@ -302,6 +317,12 @@ async function run() {
     assert.match(nodeRuntimeSource, /child\.kill\(\)/);
     assert.match(nodeRuntimeSource, /if \(this\.watcherState\)/);
     assert.match(nodeRuntimeSource, /"watcher-setup", this\.watcherState/);
+    // 全库扫描不能用 60s 默认超时：超时会 kill 掉下载共用的 utility。
+    assert.match(nodeRuntimeSource, /const WATCHER_SCAN_TIMEOUT_MS = 30 \* 60 \* 1000/);
+    assert.match(
+        nodeRuntimeSource,
+        /this\.request\("watcher-scan", state, WATCHER_SCAN_TIMEOUT_MS\)/,
+    );
 
     const nativeControllerSource = readSource(
         "src/renderer/core/track-player/controller/libmpv-audio-controller.ts",

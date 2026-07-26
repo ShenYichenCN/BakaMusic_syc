@@ -262,10 +262,14 @@ function testThemeAndNodeRuntimeIsolation() {
     assert.match(nativePlayback, /MAX_PENDING_REQUESTS/);
     assert.match(nativePlayback, /MAX_RUNTIME_WORKING_SET_KB/);
 
-    assert.match(downloader, /coverDownloadSemaphore = new Semaphore\(3\)/);
-    assert.match(downloader, /coverDownloadTimeoutMs = 15_000/);
-    assert.match(downloader, /invalid cover file signature/);
-    assert.doesNotMatch(downloader, /MAX_COVER|cover.*size.*limit/i);
+    // 封面在 main 进程拉取：URL 必须过 assertUrl，并且按签名嗅探 + 体积上限收口，
+    // utility 只接收已经准备好的 base64 数据。
+    assert.match(nodeRuntime, /const MAX_COVER_BYTES = 8 \* 1024 \* 1024/);
+    assert.match(nodeRuntime, /function sniffImageMime/);
+    assert.match(nodeRuntime, /buffer\.length > MAX_COVER_BYTES/);
+    assert.match(nodeRuntime, /mimeType\.startsWith\("image\/"\)/);
+    assert.match(nodeRuntime, /assertString\(value\.coverImage\.dataBase64, "cover image data", MAX_COVER_BYTES \* 2\)/);
+    assert.match(downloader, /payload\.coverImage\?\.dataBase64/);
     assert.equal(packageJson.dependencies?.comlink, undefined);
 }
 
