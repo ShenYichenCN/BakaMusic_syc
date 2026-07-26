@@ -36,7 +36,12 @@ assert.equal(packageJson.overrides.tmp, "0.2.7");
 assert.equal(packageJson.overrides.uuid, "11.1.1");
 assert.equal(packageJson.overrides["webpack-dev-server"], "6.0.0");
 assert.equal(packageLock.packages["node_modules/tmp"].version, "0.2.7");
-assert.equal(packageLock.packages["node_modules/uuid"].version, "11.1.1");
+// uuid 已不在当前依赖树中；override 作为传递依赖重新引入时的兜底保留，
+// 所以 lock 里要么没有该条目，要么必须是被 pin 的版本。
+const lockedUuid = packageLock.packages["node_modules/uuid"];
+if (lockedUuid) {
+    assert.equal(lockedUuid.version, "11.1.1");
+}
 assert.equal(
     packageLock.packages["node_modules/webpack-dev-server"].version,
     "6.0.0",

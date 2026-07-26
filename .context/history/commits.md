@@ -301,3 +301,11 @@ pending
 - **Decision**: Dissolve lyric card chrome and idle the toolbar in fullscreen
 - **Files**: 0 files
 - **Tests**: npm exec tsc -- --noEmit; package && npm run smoke:package
+
+## 2026-07-26T22:13:59.503+08:00 — test: realign stale source-text assertions to shipped code
+
+- **Context-Id**: 7dae4139-e79c-4acf-b267-b08b66b6dbd7
+- **Decision**: Match assertions to shipped implementation instead of reverting code
+- **Bug**: npm test failed on a clean tree at theme-contract and toolchain.
+- **Files**: 0 files
+- **Tests**: test:theme-contract; test:toolchain

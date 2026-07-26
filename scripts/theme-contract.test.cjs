@@ -428,9 +428,11 @@ const musicDetailStyles = fs.readFileSync(path.join(
     __dirname,
     "../src/renderer/components/MusicDetail/index.scss",
 ), "utf8");
+// 保留挂载的详情覆盖层在隐藏/退出时必须撤回自身与所有子元素的拖拽区域：
+// Electron 拖拽命中测试忽略 pointer-events/inert，否则关闭后底层控件仍点不动。
 assert.match(
     musicDetailStyles,
-    /&\[aria-hidden="true"\]\s+\.music-detail-topbar\s*\{[^}]*-webkit-app-region:\s*no-drag;/s,
+    /&\[aria-hidden="true"\]\s*\{[^{}]*-webkit-app-region:\s*no-drag\s*!important;\s*&,\s*&\s*\*\s*\{\s*-webkit-app-region:\s*no-drag\s*!important;/,
 );
 
 const flatUiStyles = fs.readFileSync(path.join(
