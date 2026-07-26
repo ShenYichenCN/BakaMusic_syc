@@ -329,3 +329,13 @@ pending
 - **Bug**: Batch-downloading an album with one unavailable track thrashed all downloads and retried the bad track endlessly.
 - **Files**: 0 files
 - **Tests**: test:phase3-network; test:phase5-security
+
+## 2026-07-26T22:15:06.246+08:00 — fix(playback): recover failed loads and stabilize queue identity
+
+- **Context-Id**: 17407c12-62a8-4803-95a8-707bd5f04baf
+- **Decision**: Reload on same-media when the controller has no source
+- **Decision**: Stop orphaned audio from the main process
+- **Decision**: String-key media identity and sparse sheet positions
+- **Bug**: Clicking a track that failed while offline did nothing after the network returned.
+- **Files**: 0 files
+- **Tests**: test:playback-boundary; test:phase4-data

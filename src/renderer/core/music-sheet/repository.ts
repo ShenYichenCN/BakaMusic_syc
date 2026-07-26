@@ -18,6 +18,7 @@ import optimizeArtworkDataUrl, {
     shouldOptimizeArtworkDataUrl,
 } from "@/renderer/utils/optimize-artwork-data-url";
 import AppConfig from "@shared/app-config/renderer";
+import Dexie from "dexie";
 import { nanoid } from "nanoid";
 import musicSheetDB, {
     type ISheetMusicRelation,
@@ -80,6 +81,28 @@ async function getSheetRelations(sheetId: string) {
         .equals(sheetId)
         .toArray();
     return relations.sort((left, right) => left.position - right.position);
+}
+
+/**
+ * 取歌单内 position 最小/最大的那一行（走 [sheetId+position] 索引）。
+ * position 只用于排序，不要求连续，因此插入时只需要边界值，不必读全表。
+ * 复合键里 [sheetId] 比任何 [sheetId, x] 都小，配合 Dexie.maxKey 即可框住
+ * 该歌单的全部行；缺少 position 的老数据不进索引，此时回退到全量读。
+ */
+async function getSheetBoundaryRelation(sheetId: string, edge: "first" | "last") {
+    const collection = musicSheetDB.sheetMusic
+        .where("[sheetId+position]")
+        .between([sheetId], [sheetId, Dexie.maxKey]);
+    const indexed = edge === "first"
+        ? await collection.first()
+        : await collection.last();
+    if (indexed) {
+        return indexed;
+    }
+    const relations = await getSheetRelations(sheetId);
+    return edge === "first"
+        ? relations[0]
+        : relations[relations.length - 1];
 }
 
 async function incrementMusicReferences(musicItems: IMusic.IMusicItem[]) {
@@ -468,18 +491,22 @@ export async function addMusicToSheet(
                 return;
             }
 
-            const currentRelations = await getSheetRelations(sheetId);
             const insertAtTop = normalizeMusicSheetSortType(targetSheet.sortType)
                 === MusicSheetSortType.None;
-            if (insertAtTop && currentRelations.length) {
-                currentRelations.forEach((relation) => {
-                    relation.position += addedMusicItems.length;
-                });
-                await musicSheetDB.sheetMusic.bulkPut(currentRelations);
-            }
+            // 置顶插入原来会把整张歌单的关系行全部 +N 再 bulkPut——收藏一首歌
+            // 等于重写全表（1 万首 = 1 万次写）。position 只用于排序，允许稀疏
+            // 甚至负值，所以只取边界值向外扩展即可。
+            const boundaryRelation = await getSheetBoundaryRelation(
+                sheetId,
+                insertAtTop ? "first" : "last",
+            );
 
             const addedAt = Date.now();
-            const startPosition = insertAtTop ? 0 : currentRelations.length;
+            const startPosition = boundaryRelation
+                ? (insertAtTop
+                    ? boundaryRelation.position - addedMusicItems.length
+                    : boundaryRelation.position + 1)
+                : 0;
             const newRelations = addedMusicItems.map((musicItem, index) => ({
                 sheetId,
                 platform: musicItem.platform,
@@ -539,7 +566,6 @@ export async function removeMusicFromSheet(
                 if (removeKeys.has(getMediaPrimaryKey(relationToMediaBase(relation)))) {
                     removedRelations.push(relation);
                 } else {
-                    relation.position = retainedRelations.length;
                     retainedRelations.push(relation);
                 }
             });
@@ -551,9 +577,8 @@ export async function removeMusicFromSheet(
             await musicSheetDB.sheetMusic.bulkDelete(
                 removedRelations.map(getRelationKey),
             );
-            if (retainedRelations.length) {
-                await musicSheetDB.sheetMusic.bulkPut(retainedRelations);
-            }
+            // 不再把保留下来的行重新密集编号：position 只需保持相对顺序，
+            // 留空隙即可，省下每次删除一首歌就重写全表的开销。
             nextArtwork = await getRelationArtwork(
                 retainedRelations[retainedRelations.length - 1],
             );

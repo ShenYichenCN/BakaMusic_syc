@@ -288,11 +288,55 @@ function testPlaybackBoundaryIntegration() {
     assert.doesNotMatch(matchSource, /encodeURIComponent/);
 }
 
+function testPlaybackRecoveryContract() {
+    const trackPlayer = read("src/renderer/core/track-player/index.ts");
+    // 上次载入失败后控制器没有 source，同曲快捷路径必须回退到完整载入，
+    // 否则 seekTo/play 都是空操作，再点同一首歌毫无反应。
+    const sameMediaStart = trackPlayer.indexOf("// 2. same media");
+    const sameMediaBranch = trackPlayer.slice(
+        sameMediaStart,
+        trackPlayer.indexOf("this.beginMediaLoad();", sameMediaStart),
+    );
+    assert.match(sameMediaBranch, /&& this\.audioController\.hasSource/);
+    // 切歌缓冲期间切音质不得沿用上一首的进度。
+    assert.match(
+        trackPlayer,
+        /seekTo: this\.audioController\.hasSource\s*\?\s*this\.progress\.currentTime \?\? 0\s*:\s*0,/,
+    );
+
+    // renderer 重新导航/崩溃后主进程要停掉遗留的 libmpv source。
+    const nativePlayback = read("src/shared/native-playback/main.ts");
+    assert.match(nativePlayback, /private activeSourceId = ""/);
+    assert.match(nativePlayback, /private stopOrphanedPlayback\(\)/);
+    assert.match(nativePlayback, /webContents\.on\("did-start-navigation"/);
+    assert.match(nativePlayback, /webContents\.on\("render-process-gone"/);
+    assert.match(nativePlayback, /operation: "stop", sourceId/);
+
+    // 媒体身份统一按字符串归一（插件常返回 number id）。
+    const indexMap = read("src/common/index-map.ts");
+    assert.match(indexMap, /idMap\.set\(`\$\{id\}`, index\)/);
+    assert.match(indexMap, /indexMap\.get\(`\$\{mediaItem\.platform\}`\)/);
+    assert.doesNotMatch(indexMap, /\.get\(mediaItem\?\.id\)/);
+
+    // 歌单关系行的 position 只保序、不再密集重排。
+    const repository = read("src/renderer/core/music-sheet/repository.ts");
+    assert.match(repository, /async function getSheetBoundaryRelation/);
+    assert.match(repository, /boundaryRelation\.position - addedMusicItems\.length/);
+    const removeBlock = repository.slice(
+        repository.indexOf("export async function removeMusicFromSheet"),
+    );
+    assert.doesNotMatch(
+        removeBlock.slice(0, removeBlock.indexOf("nextArtwork = await getRelationArtwork")),
+        /relation\.position = retainedRelations\.length/,
+    );
+}
+
 testLocalMediaUrlContract();
 testLocalMediaRanges();
 testLocalFormatCoverage();
 testLyricDecryptionCompatibility();
 testManagedMediaProxyRouting();
 testPlaybackBoundaryIntegration();
+testPlaybackRecoveryContract();
 
 console.log("playback-boundary: all assertions passed");

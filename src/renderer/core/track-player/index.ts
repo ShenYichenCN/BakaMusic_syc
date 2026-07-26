@@ -532,7 +532,15 @@ class TrackPlayer {
         index = (index + this.musicQueue.length) % this.musicQueue.length;
 
         // 2. same media
-        if (this.currentIndex === index && this.isCurrentMusic(this.musicQueue[index]) && !refreshSource) {
+        // 上一次载入失败（取源报错、离线、启动恢复失败）后控制器没有 source，
+        // seekTo/play 都是空操作。此时必须走完整载入流程，否则再次点同一首歌
+        // 会毫无反应——没有缓冲态、没有报错、也不会重试。
+        if (
+            this.currentIndex === index
+            && this.isCurrentMusic(this.musicQueue[index])
+            && !refreshSource
+            && this.audioController.hasSource
+        ) {
             if (restartOnSameMedia) {
                 this.seekTo(0);
             }
@@ -980,8 +988,13 @@ class TrackPlayer {
                 return false;
             }
 
+            // 切歌期间 progressStore 仍是上一首的进度（resetProgress 只在 setTrack
+            // 里发生）。此时若在新歌缓冲中切音质，会把新歌 seek 到上一首的位置，
+            // 所以只有当前 source 真的已载入时才沿用进度。
             this.setTrack(mediaSource, currentMusic, {
-                seekTo: this.progress.currentTime ?? 0,
+                seekTo: this.audioController.hasSource
+                    ? this.progress.currentTime ?? 0
+                    : 0,
                 autoPlay: isPlaybackActive(this.playerState),
             });
             this.setCurrentQuality(realQuality);

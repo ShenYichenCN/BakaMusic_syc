@@ -1,5 +1,6 @@
 import {
     app,
+    BrowserWindow,
     ipcMain,
     utilityProcess,
     UtilityProcess,
@@ -205,9 +206,17 @@ class NativePlaybackManager {
     private resourceTimer: NodeJS.Timeout | null = null;
     private windowManager!: IWindowManager;
     private shuttingDown = false;
+    /** 最近一次 load 的 sourceId：renderer 消失后主进程要靠它停掉遗留音频。 */
+    private activeSourceId = "";
 
     setup(windowManager: IWindowManager) {
         this.windowManager = windowManager;
+        windowManager.on("WindowCreated", (data) => {
+            if (data.windowName !== "main") {
+                return;
+            }
+            this.observeMainWindowLifecycle(data.browserWindow);
+        });
         ipcMain.handle("@shared/native-playback/capabilities", (event) => {
             assertIpcSender(event, ["main"]);
             return this.getCapabilities();
@@ -218,9 +227,44 @@ class NativePlaybackManager {
         });
         ipcMain.handle("@shared/native-playback/command", async (event, command) => {
             assertIpcSender(event, ["main"]);
-            return this.request("command", validateCommand(command));
+            const validated = validateCommand(command);
+            if (validated.operation === "load") {
+                this.activeSourceId = validated.sourceId;
+            }
+            const result = await this.request("command", validated);
+            if (validated.operation === "stop" && validated.sourceId === this.activeSourceId) {
+                this.activeSourceId = "";
+            }
+            return result;
         });
         app.on("before-quit", () => this.dispose());
+    }
+
+    /**
+     * renderer 重新导航或崩溃后，utility 里的旧 source 还在出声，而新的
+     * LibmpvAudioController 没有 sourceId —— pause/seek/reset 全是空操作，
+     * 协议里也没有无 sourceId 的全局 stop，UI 因此再也停不下这段音频。
+     * 所以由主进程记住当前 sourceId 并主动停掉。
+     */
+    private observeMainWindowLifecycle(browserWindow: BrowserWindow) {
+        const { webContents } = browserWindow;
+        webContents.on("did-start-navigation", (details) => {
+            if (details.isMainFrame && !details.isSameDocument) {
+                this.stopOrphanedPlayback();
+            }
+        });
+        webContents.on("render-process-gone", () => this.stopOrphanedPlayback());
+        browserWindow.on("closed", () => this.stopOrphanedPlayback());
+    }
+
+    private stopOrphanedPlayback() {
+        const sourceId = this.activeSourceId;
+        if (!sourceId || !this.child?.pid) {
+            return;
+        }
+        this.activeSourceId = "";
+        void this.request("command", { operation: "stop", sourceId })
+            .catch(() => undefined);
     }
 
     private async getCapabilities(): Promise<INativePlaybackCapabilities> {
