@@ -14,7 +14,7 @@ import {
     usePlayerState,
     useQuality,
 } from "@renderer/core/track-player/hooks";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { musicDetailShownStore } from "@renderer/components/MusicDetail/store";
 import { isModalOpen } from "@/renderer/components/Modal";
 import { isContextMenuOpen } from "@/renderer/components/ContextMenu";
@@ -66,7 +66,7 @@ function MusicDetail() {
         isFullscreenRef.current = isFullscreen;
     }, [isFullscreen]);
 
-    const clearImmersiveSchedulers = () => {
+    const clearImmersiveSchedulers = useCallback(() => {
         if (immersiveOsTimerRef.current !== null) {
             clearTimeout(immersiveOsTimerRef.current);
             immersiveOsTimerRef.current = null;
@@ -87,14 +87,14 @@ function MusicDetail() {
             clearTimeout(pendingReconcileTimerRef.current);
             pendingReconcileTimerRef.current = null;
         }
-    };
+    }, []);
 
     useEffect(() => {
         return () => {
             clearImmersiveSchedulers();
             pendingImmersiveRef.current = null;
         };
-    }, []);
+    }, [clearImmersiveSchedulers]);
 
     useEffect(() => {
         const clearCursorHideTimer = () => {
@@ -129,7 +129,7 @@ function MusicDetail() {
         };
     }, [isFullscreen]);
 
-    const markImmersiveBusy = () => {
+    const markImmersiveBusy = useCallback(() => {
         setIsImmersiveBusy(true);
         if (immersiveBusyTimerRef.current !== null) {
             clearTimeout(immersiveBusyTimerRef.current);
@@ -138,11 +138,11 @@ function MusicDetail() {
             immersiveBusyTimerRef.current = null;
             setIsImmersiveBusy(false);
         }, IMMERSIVE_BUSY_MS);
-    };
+    }, []);
 
     // Veil lifecycle: the phase attribute must return to "idle" on every path,
     // or animation fill-mode would strand the columns at their keyframe state.
-    const markImmersivePhase = (next: boolean) => {
+    const markImmersivePhase = useCallback((next: boolean) => {
         if (immersivePhaseTimerRef.current !== null) {
             clearTimeout(immersivePhaseTimerRef.current);
         }
@@ -151,13 +151,13 @@ function MusicDetail() {
             immersivePhaseTimerRef.current = null;
             setImmersivePhase("idle");
         }, next ? IMMERSIVE_PHASE_ENTER_MS : IMMERSIVE_PHASE_EXIT_MS);
-    };
+    }, []);
 
     // A led toggle that never yields a fullscreen-changed event (the OS side was
     // debounced away, or the window was already in the target state) would leave
     // pendingImmersiveRef walling off every later event forever, with chrome and
     // OS inverted. After the veil settles, reconcile chrome against reality.
-    const schedulePendingReconcile = () => {
+    const schedulePendingReconcile = useCallback(() => {
         if (pendingReconcileTimerRef.current !== null) {
             clearTimeout(pendingReconcileTimerRef.current);
         }
@@ -183,9 +183,12 @@ function MusicDetail() {
                 isFullscreenRef.current = actual;
             });
         }, IMMERSIVE_BUSY_MS);
-    };
+    }, [markImmersiveBusy, markImmersivePhase]);
 
-    const applyImmersiveFullScreen = (next: boolean, options?: { osDelayMs?: number }) => {
+    const applyImmersiveFullScreen = useCallback((
+        next: boolean,
+        options?: { osDelayMs?: number },
+    ) => {
         // Drive chrome CSS first; delay OS fullscreen so enter/exit motion can lead.
         clearImmersiveSchedulers();
 
@@ -242,9 +245,14 @@ function MusicDetail() {
         }
 
         immersiveOsTimerRef.current = setTimeout(applyOs, delayMs);
-    };
+    }, [
+        clearImmersiveSchedulers,
+        markImmersiveBusy,
+        markImmersivePhase,
+        schedulePendingReconcile,
+    ]);
 
-    const toggleImmersiveFullScreen = () => {
+    const toggleImmersiveFullScreen = useCallback(() => {
         // Main-process F11 + renderer backup can both fire; debounce to avoid no-op double toggle.
         const now = Date.now();
         if (now - lastF11ToggleAtRef.current < IMMERSIVE_TOGGLE_DEBOUNCE_MS) {
@@ -252,7 +260,7 @@ function MusicDetail() {
         }
         lastF11ToggleAtRef.current = now;
         applyImmersiveFullScreen(!isFullscreenRef.current);
-    };
+    }, [applyImmersiveFullScreen]);
 
     // Keep immersive chrome in sync with OS fullscreen while detail is open.
     useEffect(() => {
@@ -288,7 +296,7 @@ function MusicDetail() {
         return () => {
             unsubscribe?.();
         };
-    }, []);
+    }, [markImmersiveBusy, markImmersivePhase]);
 
     // F11 OS toggle is global (bootstrap). Here only lead immersive chrome when open.
     useEffect(() => {
@@ -315,7 +323,7 @@ function MusicDetail() {
         return () => {
             unsubscribe?.();
         };
-    }, []);
+    }, [markImmersiveBusy, markImmersivePhase, schedulePendingReconcile]);
 
     // Opening: adopt current OS fullscreen as immersive chrome.
     // Closing: clear chrome only — keep the main window fullscreen if it was.
@@ -352,7 +360,7 @@ function MusicDetail() {
         isFullscreenRef.current = false;
         setIsImmersiveBusy(false);
         setImmersivePhase("idle");
-    }, [musicDetailShown]);
+    }, [clearImmersiveSchedulers, markImmersiveBusy, musicDetailShown]);
 
     useEffect(() => {
         // Escape only while detail is open. F11 is owned globally + chrome lead above.
@@ -403,7 +411,7 @@ function MusicDetail() {
         return () => {
             window.removeEventListener("keydown", keyHandler, true);
         };
-    }, [musicDetailShown]);
+    }, [applyImmersiveFullScreen, musicDetailShown, toggleImmersiveFullScreen]);
 
     const artwork = musicItem?.coverImg || musicItem?.artwork || albumImg;
     const qualityLabel = quality ? (qualityText[quality] || quality).replace(/^.*?\s/, "") : null;
