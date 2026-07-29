@@ -285,6 +285,12 @@ async function run() {
     assert.match(coverFetchSource, /async function fetchCoverImageInMain/);
     assert.match(coverFetchSource, /buffer\.length > MAX_COVER_BYTES/);
     assert.match(coverFetchSource, /mimeType\.startsWith\("image\/"\)/);
+    // A missing lyric is represented as an empty string by several plugins.
+    // It must remain a valid optional postprocess value instead of failing IPC.
+    assert.match(
+        coverFetchSource,
+        /assertString\(value\.lyricContent, "lyric content", 8 \* 1024 \* 1024, true\)/,
+    );
 
     const downloaderSource = readSource("src/renderer/core/downloader/index.ts");
     assert.match(downloaderSource, /@shared\/node-runtime\/renderer/);

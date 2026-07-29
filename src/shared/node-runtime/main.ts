@@ -143,7 +143,11 @@ function validatePostprocessPayload(value: unknown) {
         assertString(value.coverImage.mimeType, "cover image mime", 128);
     }
     if (value.lyricContent !== undefined && value.lyricContent !== null) {
-        assertString(value.lyricContent, "lyric content", 8 * 1024 * 1024);
+        // An empty string means that the plugin has no lyric for this track.
+        // The utility postprocessor already skips empty lyric tags/sidecars, so
+        // keep validating the type and size without turning a valid download
+        // into an IPC error.
+        assertString(value.lyricContent, "lyric content", 8 * 1024 * 1024, true);
     }
 }
 
