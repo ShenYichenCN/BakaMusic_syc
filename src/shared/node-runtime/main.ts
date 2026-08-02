@@ -7,9 +7,11 @@ import {
 } from "electron";
 import path from "path";
 import type {
+    DownloadCoverImageMode,
     IDownloadCoverImage,
     IDownloadPostprocessPayload,
 } from "@/common/download-postprocess";
+import { prepareDownloadCoverImage } from "@/common/download-cover-image";
 import { supportLocalMediaType } from "@/common/constant";
 import type { IWindowManager } from "@/types/window-manager";
 import {
@@ -168,8 +170,18 @@ function sniffImageMime(bytes: Buffer): string | null {
     return null;
 }
 
+function validateDownloadCoverImageMode(value: unknown): DownloadCoverImageMode {
+    if (value === "compatible-jpeg" || value === "original") {
+        return value;
+    }
+    throw new Error("cover image mode is outside its enum");
+}
+
 /** Plain Chromium fetch — no custom host/UA/Referer patching. */
-async function fetchCoverImageInMain(coverUrl: string): Promise<IDownloadCoverImage> {
+async function fetchCoverImageInMain(
+    coverUrl: string,
+    mode: DownloadCoverImageMode,
+): Promise<IDownloadCoverImage> {
     assertUrl(coverUrl, ["https:", "http:"], 8192, { allowCredentials: true });
     const response = await net.fetch(coverUrl, { redirect: "follow" });
     if (!response.ok) {
@@ -188,6 +200,17 @@ async function fetchCoverImageInMain(coverUrl: string): Promise<IDownloadCoverIm
     if (!mimeType.startsWith("image/")) {
         throw new Error(`cover is not an image (${mimeType})`);
     }
+
+    try {
+        const prepared = await prepareDownloadCoverImage(buffer, mimeType, mode);
+        return {
+            dataBase64: prepared.data.toString("base64"),
+            mimeType: prepared.mimeType,
+        };
+    } catch (error) {
+        logger.logError("封面兼容转换失败，保留原始封面", toError(error));
+    }
+
     return {
         dataBase64: buffer.toString("base64"),
         mimeType,
@@ -222,10 +245,17 @@ class NodeRuntimeManager {
             return true;
         });
         // Cover fetch runs in main (Chromium net), not utility undici.
-        ipcMain.handle("@shared/node-runtime/fetch-cover-image", async (event, coverUrl) => {
+        ipcMain.handle("@shared/node-runtime/fetch-cover-image", async (
+            event,
+            coverUrl,
+            coverImageMode,
+        ) => {
             assertIpcSender(event, ["main"]);
             assertString(coverUrl, "cover URL", 8192);
-            return fetchCoverImageInMain(coverUrl);
+            return fetchCoverImageInMain(
+                coverUrl,
+                validateDownloadCoverImageMode(coverImageMode),
+            );
         });
         ipcMain.handle("@shared/node-runtime/download-file", async (event, taskId, mediaSource, filePath) => {
             assertIpcSender(event, ["main"]);

@@ -1,6 +1,10 @@
 import { ipcRenderer } from "electron";
 import exposeInMainWorld from "@/preload/expose-in-main-world";
-import type { IDownloadPostprocessPayload } from "@/common/download-postprocess";
+import type {
+    DownloadCoverImageMode,
+    IDownloadCoverImage,
+    IDownloadPostprocessPayload,
+} from "@/common/download-postprocess";
 import { DownloadState } from "@/common/constant";
 
 type DownloadStateCallback = (state: {
@@ -106,11 +110,15 @@ async function postprocessDownloadedFile(
 }
 
 /** Main-process Chromium net.fetch for cover bytes (not utility undici). */
-async function fetchCoverImage(coverUrl: string) {
+async function fetchCoverImage(
+    coverUrl: string,
+    coverImageMode: DownloadCoverImageMode,
+) {
     return await ipcRenderer.invoke(
         "@shared/node-runtime/fetch-cover-image",
         coverUrl,
-    ) as { dataBase64: string; mimeType: string };
+        coverImageMode,
+    ) as IDownloadCoverImage;
 }
 
 async function overwriteEmbeddedLyric(filePath: string, lyricContent: string) {

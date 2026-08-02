@@ -2,6 +2,7 @@ import {
     formatLyricsByTimestamp,
     getDefaultDownloadTagWriteOptions,
     hasDownloadPostprocessEnabled,
+    DownloadCoverImageMode,
     IDownloadPostprocessPayload,
     IDownloadPostprocessMusicItem,
     IDownloadTagWriteOptions,
@@ -142,6 +143,8 @@ function getDownloadTagWriteOptions(): IDownloadTagWriteOptions {
             ?? defaults.writeMetadata,
         writeMetadataCover: AppConfig.getConfig("download.writeMetadataCover")
             ?? defaults.writeMetadataCover,
+        coverImageMode: AppConfig.getConfig("download.coverImageMode")
+            ?? defaults.coverImageMode,
         writeMetadataLyric: AppConfig.getConfig("download.writeMetadataLyric")
             ?? defaults.writeMetadataLyric,
         downloadLyricFile: AppConfig.getConfig("download.downloadLyricFile")
@@ -179,7 +182,10 @@ export async function buildDownloadPostprocessPayload(
         try {
             const fetchCover = (
                 nodeRuntime as {
-                    fetchCoverImage?: (url: string) => Promise<{
+                    fetchCoverImage?: (
+                        url: string,
+                        mode: DownloadCoverImageMode,
+                    ) => Promise<{
                         dataBase64: string;
                         mimeType: string;
                     }>;
@@ -188,7 +194,7 @@ export async function buildDownloadPostprocessPayload(
             if (typeof fetchCover !== "function") {
                 throw new Error("fetchCoverImage IPC is unavailable (restart app)");
             }
-            coverImage = await fetchCover(coverUrl);
+            coverImage = await fetchCover(coverUrl, options.coverImageMode);
         } catch (error) {
             logger.logError("下载封面拉取失败", error as Error, {
                 musicItem: pickMusicItemPayload(musicItem),

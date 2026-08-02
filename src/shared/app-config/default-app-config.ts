@@ -20,6 +20,7 @@ const _defaultAppConfig: IAppConfig =  {
     "download.whenQualityMissing": "lower",
     "download.writeMetadata": true,
     "download.writeMetadataCover": true,
+    "download.coverImageMode": "compatible-jpeg",
     "download.writeMetadataLyric": true,
     "download.downloadLyricFile": false,
     "download.lyricFileFormat": "lrc",

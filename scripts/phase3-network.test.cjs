@@ -285,6 +285,15 @@ async function run() {
     assert.match(coverFetchSource, /async function fetchCoverImageInMain/);
     assert.match(coverFetchSource, /buffer\.length > MAX_COVER_BYTES/);
     assert.match(coverFetchSource, /mimeType\.startsWith\("image\/"\)/);
+    assert.match(coverFetchSource, /validateDownloadCoverImageMode/);
+    assert.match(coverFetchSource, /prepareDownloadCoverImage\(buffer, mimeType, mode\)/);
+    const coverPrepareSource = readSource("src/common/download-cover-image.ts");
+    assert.match(coverPrepareSource, /COMPATIBLE_COVER_MAX_EDGE = 800/);
+    assert.match(coverPrepareSource, /COMPATIBLE_COVER_MAX_BYTES = 1024 \* 1024/);
+    assert.match(coverPrepareSource, /progressive: false/);
+    assert.match(coverPrepareSource, /mimeType: "image\/jpeg"/);
+    const downloadPostprocessSource = readSource("src/renderer/core/downloader/postprocess.ts");
+    assert.match(downloadPostprocessSource, /fetchCover\(coverUrl, options\.coverImageMode\)/);
     // A missing lyric is represented as an empty string by several plugins.
     // It must remain a valid optional postprocess value instead of failing IPC.
     assert.match(

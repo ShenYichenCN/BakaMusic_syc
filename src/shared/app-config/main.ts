@@ -62,6 +62,7 @@ const rendererWritableConfigKeys = new Set<keyof IAppConfig>([
     "download.concurrency",
     "download.writeMetadata",
     "download.writeMetadataCover",
+    "download.coverImageMode",
     "download.writeMetadataLyric",
     "download.downloadLyricFile",
     "download.lyricFileFormat",
@@ -133,6 +134,7 @@ const enumConfigValues = new Map<keyof IAppConfig, ReadonlySet<string>>([
     ["playMusic.whenDeviceRemoved", new Set(["pause", "play"])],
     ["download.defaultQuality", new Set(["mgg", "128k", "192k", "320k", "flac", "flac24bit", "hires", "vinyl", "dolby", "atmos", "atmos_plus", "master"])],
     ["download.whenQualityMissing", new Set(["higher", "lower"])],
+    ["download.coverImageMode", new Set(["compatible-jpeg", "original"])],
     ["download.lyricFileFormat", new Set(["lrc", "txt"])],
     ["download.fileNamingType", new Set(["preset", "custom"])],
     ["download.fileNamingPreset", new Set([

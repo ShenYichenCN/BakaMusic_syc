@@ -1,10 +1,12 @@
 import LyricParser from "@/renderer/utils/lyric-parser";
 
 export type DownloadLyricOrderItem = "original" | "translation" | "romanization";
+export type DownloadCoverImageMode = "compatible-jpeg" | "original";
 
 export interface IDownloadTagWriteOptions {
     writeMetadata: boolean;
     writeMetadataCover: boolean;
+    coverImageMode: DownloadCoverImageMode;
     writeMetadataLyric: boolean;
     downloadLyricFile: boolean;
     lyricFileFormat: "lrc" | "txt";
@@ -56,6 +58,7 @@ export function getDefaultDownloadTagWriteOptions(): IDownloadTagWriteOptions {
     return {
         writeMetadata: true,
         writeMetadataCover: true,
+        coverImageMode: "compatible-jpeg",
         writeMetadataLyric: true,
         downloadLyricFile: false,
         lyricFileFormat: "lrc",

@@ -308,6 +308,7 @@ function FileNamingSettingGroup() {
 export default function Download() {
     const { t } = useTranslation();
     const writeMetadata = useAppConfig("download.writeMetadata") ?? true;
+    const writeMetadataCover = useAppConfig("download.writeMetadataCover") ?? true;
     const writeMetadataLyric = useAppConfig("download.writeMetadataLyric") ?? true;
     const downloadLyricFile = useAppConfig("download.downloadLyricFile") ?? false;
     const showLyricSettings = (writeMetadata && writeMetadataLyric) || downloadLyricFile;
@@ -376,6 +377,18 @@ export default function Download() {
                             label={t("settings.download.write_metadata_cover")}
                             keyPath="download.writeMetadataCover"
                         ></CheckBoxSettingItem>
+                        {writeMetadataCover ? (
+                            <RadioGroupSettingItem
+                                label={t("settings.download.cover_image_mode")}
+                                keyPath="download.coverImageMode"
+                                options={["compatible-jpeg", "original"]}
+                                renderItem={(item) => t(
+                                    item === "original"
+                                        ? "settings.download.cover_image_mode_original"
+                                        : "settings.download.cover_image_mode_compatible_jpeg",
+                                )}
+                            ></RadioGroupSettingItem>
+                        ) : null}
                         <CheckBoxSettingItem
                             label={t("settings.download.write_metadata_lyric")}
                             keyPath="download.writeMetadataLyric"

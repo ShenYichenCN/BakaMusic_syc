@@ -93,6 +93,8 @@ interface _IAppConfig {
     "download.writeMetadata": boolean;
     /** 下载时写入封面 */
     "download.writeMetadataCover": boolean;
+    /** 下载封面处理模式 */
+    "download.coverImageMode": "compatible-jpeg" | "original";
     /** 下载时写入歌词 */
     "download.writeMetadataLyric": boolean;
     /** 下载歌词文件 */
